@@ -225,7 +225,6 @@ class RowWidthTest {
         val loop = full + " - "
         assertEquals(head, step.displayLine(tick = loop.length))
     }
-}
 
     @Test
     fun `the maneuver is built for line one and metrics for line two`() {
@@ -263,3 +262,4 @@ class RowWidthTest {
         assertEquals("", step.metricsLine())
         assertEquals("ETA 4m", step.copy(etaMinutes = 4).metricsLine())
     }
+}
