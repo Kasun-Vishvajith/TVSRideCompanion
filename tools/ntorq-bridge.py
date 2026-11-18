@@ -624,8 +624,9 @@ class BleLayer:
             async def do_notify(self, frame: bytes):
                 if not self.notifying:
                     raise RuntimeError("notify with no subscriber")
-                self._value = frame
-                self.emit_properties_changed({"Value": frame})
+                payload = bytes(frame)
+                self._value = payload
+                self.emit_properties_changed({"Value": payload})
 
         class Advertisement(ServiceInterface):
             def __init__(self):
@@ -719,7 +720,7 @@ class BleLayer:
         try:
             await self._notify_char.do_notify(data)
         except Exception as exc:
-            log.debug("notify failed: %s", exc)
+            log.warning("notify failed: %s", exc)
 
     async def stop(self) -> None:
         if self._bus:
@@ -862,8 +863,11 @@ class Bridge:
             next_state = time.monotonic() + state_every
             while True:
                 now = time.monotonic()
-                for frame in self.telemetry.poll(now):
+                frames = self.telemetry.poll(now)
+                for frame in frames:
                     await self.ble_notify(frame)
+                    if len(frames) > 1:
+                        await asyncio.sleep(0.02)
                 if now >= next_state:
                     next_state = now + state_every
                     await self.send_state()
