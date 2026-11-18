@@ -55,7 +55,7 @@ class NavigationBridgeTest {
         assertEquals(listOf(0L, 1500L, 3000L, 4500L), controls.map { it.first })
         assertTrue(controls.drop(1).all { it.second[10] == 1.toByte() && it.second[11] == 1.toByte() })
         assertFalse(sent.filter { it.first > 0 }.any { it.second.id() == 0x50 })
-        val texts = sent.filter { it.first > 0 && it.second.id() == 0x4F }.map { it.second.toList() }
+        val texts = sent.filter { it.second.id() == 0x4F }.map { it.second.toList() }
         assertEquals(1, texts.distinct().size)
         primary = false
         advanceTimeBy(1500); runCurrent()

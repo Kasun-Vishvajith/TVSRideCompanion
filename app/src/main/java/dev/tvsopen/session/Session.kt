@@ -44,6 +44,10 @@ data class Telemetry(
     val milBlinkCode: Int? = null,
     val softwareVersion: String? = null,  // SM2 idx 7
     val avgEconomyKmpl: Int? = null,      // SM3 idx 8
+    val tripAKm: Double? = null,
+    val tripBKm: Double? = null,
+    val gear: Int? = null,
+    val averageEconomyCandidate: Int? = null,
     val averageEconomyRaw: Int? = null,
     val instantEconomyRaw: Int? = null,
     val instantEconomyKmpl: Int? = null,  // SM3 idx 9
@@ -80,6 +84,8 @@ data class Telemetry(
         return if (verified) "Verified mapping" else "Candidate / unverified"
     }
 
+    val fuelBarMax: Int get() = if (raiderProfile) 5 else FUEL_BAR_MAX
+
     /** Clear only expired groups; live speed must not refresh battery or status. */
     fun forDisplay(now: Long): Telemetry {
         fun fresh(id: Int) = updatedAtById[id]?.let { (now - it).coerceAtLeast(0) < STALE_AFTER_MS } == true
@@ -88,10 +94,11 @@ data class Telemetry(
             averageSpeedKmh = null, topSpeedKmh = null, throttlePercent = null, timeTo60Sec = null,
             tripFMeters = null, engineRpm = null)
         if (!fresh(0x11)) shown = shown.copy(serviceDue = null, milOn = null, milBlinkCode = null,
-            softwareVersion = null)
+            softwareVersion = null, gear = null)
         if (!fresh(0x18)) shown = shown.copy(engineTempC = null, batteryVoltage = null)
         if (!fresh(0x19)) shown = shown.copy(avgEconomyKmpl = null, instantEconomyKmpl = null,
             distanceToEmptyKm = null)
+        // Trip counters are historical readings; keep them visible with a freshness label.
         return shown
     }
 
@@ -265,9 +272,11 @@ object Session {
         if (isConnected && !wasConnected) {
             _telemetry.value = Telemetry(raiderProfile = model == VehicleModel.RAIDER_125)
             rideLog?.start()
+            rideLog?.let { _rides.value = it.rides.value }
         }
         if (!isConnected && wasConnected) {
             rideLog?.finish()
+            rideLog?.let { _rides.value = it.rides.value }
             _totalRides.value = rideLog?.totalRides ?: _totalRides.value
             _totalRideDistanceKm.value = rideLog?.totalDistanceKm ?: _totalRideDistanceKm.value
         }
@@ -326,8 +335,11 @@ object Session {
                 // to clear the previous one, not leave a stale level on screen.
                 fuelBars = frame.field(Field.FUEL_LEVEL)?.toInt()
                     ?.let { if (fuelLowNibble) it and 0x0F else it }
-                    ?.takeIf { it in 0..Telemetry.FUEL_BAR_MAX },
-                averageSpeedKmh = frame.field(Field.AVERAGE_SPEED)?.toInt() ?: cur.averageSpeedKmh,
+                    ?.takeIf { it in 0..(if (raider) 5 else Telemetry.FUEL_BAR_MAX) },
+                averageSpeedKmh = frame.field(Field.AVERAGE_SPEED)?.toInt()
+                    ?.takeUnless { raider && it == 0 } ?: if (raider) null else cur.averageSpeedKmh,
+                averageEconomyCandidate = frame.field(Field.AVERAGE_ECONOMY_CANDIDATE)?.toInt()
+                    ?.takeIf { it in 1..254 },
                 tripStatus = frame.field(Field.TRIP_STATUS)?.toInt() ?: cur.tripStatus,
                 topSpeedKmh = frame.field(Field.TOP_SPEED)?.toInt() ?: cur.topSpeedKmh,
                 throttlePercent = scaled(Field.THROTTLE_POSITION, 2.0)?.toInt()?.takeIf { it in 0..100 },
@@ -339,6 +351,11 @@ object Session {
             ).also { trackRideDistance() }
 
             0x11 -> cur.copy(
+                gear = if (raider) frame.field(Field.GEAR_POSITION)?.toInt()?.takeIf { value ->
+                    value in 0..5 && frame.field(Field.NEUTRAL_STATUS)?.let {
+                        ((it and 1L) != 0L) == (value == 0)
+                    } == true
+                } else cur.gear,
                 serviceDue = (frame.field(Field.SERVICE_REMINDER)?.toInt()?.let { it != 0 })
                     ?: cur.serviceDue,
                 milOn = (frame.field(Field.VEHICLE_DIAGNOSTICS)?.toInt()
@@ -352,8 +369,10 @@ object Session {
             )
 
             0x19 -> cur.copy(
-                averageEconomyRaw = frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt() ?: cur.averageEconomyRaw,
-                instantEconomyRaw = frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt() ?: cur.instantEconomyRaw,
+                tripAKm = scaled(Field.TRIP_A_DISTANCE, 10.0) ?: cur.tripAKm,
+                tripBKm = scaled(Field.TRIP_B_DISTANCE, 10.0) ?: cur.tripBKm,
+                averageEconomyRaw = if (raider) null else frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt() ?: cur.averageEconomyRaw,
+                instantEconomyRaw = if (raider) null else frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt() ?: cur.instantEconomyRaw,
                 avgEconomyKmpl = if (raider) null else frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt()
                     ?: cur.avgEconomyKmpl,
                 instantEconomyKmpl = if (raider) null else frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt()

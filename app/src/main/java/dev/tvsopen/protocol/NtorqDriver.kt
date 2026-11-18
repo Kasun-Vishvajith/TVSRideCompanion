@@ -336,7 +336,7 @@ class NtorqDriver(
      * working reference for Ntorq exists.
      */
     override val capabilities = Capabilities(
-        findMyScooter = true,
+        findMyScooter = model != VehicleModel.RAIDER_125 && model != VehicleModel.RAIDER_180,
         navigationHud = true,
         textMessages = false,
         callerId = false,
@@ -354,21 +354,29 @@ class NtorqDriver(
         callButtons = false,
     )
 
-    override fun confidence() = mapOf(
-        "GATT UUIDs" to Confidence.VERIFIED_FROM_APK,
-        "AES-CTR handshake key" to Confidence.VERIFIED_FROM_APK,
-        "start bytes 0x5A / 0x9B" to Confidence.VERIFIED_FROM_APK,
-        "inbound frame layouts" to if (model == VehicleModel.RAIDER_125)
-            Confidence.INHERITED_UNVERIFIED else Confidence.VERIFIED_FROM_APK,
-        "Raider RPM bytes 16..17 (captured fixtures; calibration pending)" to Confidence.INHERITED_UNVERIFIED,
-        "Raider economy, temperature and trip F semantics" to Confidence.NEEDS_CAPTURE,
-        "navigation control 0x5A 0x4E" to Confidence.VERIFIED_FROM_APK,
-        "navigation text 0x5B 0x4F" to Confidence.VERIFIED_FROM_APK,
-        "navigation second row 0x5B 0x50" to Confidence.INHERITED_UNVERIFIED,
-        "outbound ping 0x4A" to Confidence.INHERITED_UNVERIFIED,
-        "text rows 0x4C / 0x63" to Confidence.NEEDS_CAPTURE,
-        "pictogram table on Ntorq TFT" to Confidence.NEEDS_CAPTURE,
-    )
+    override fun confidence(): Map<String, Confidence> = buildMap {
+        put("GATT service and characteristics", Confidence.VERIFIED_FROM_APK)
+        put("Framing 0x5A / 0x9B", Confidence.VERIFIED_FROM_APK)
+        put("Handshake code exists; use on this vehicle is unconfirmed", Confidence.VERIFIED_FROM_APK)
+        put("Navigation control / primary text formats", Confidence.VERIFIED_FROM_APK)
+        put("Secondary-row rendering", Confidence.INHERITED_UNVERIFIED)
+        if (model == VehicleModel.RAIDER_125) {
+            put("Raider connection and navigation display", Confidence.OBSERVED_ON_VEHICLE)
+            put("RPM bytes 16–17; independent calibration pending", Confidence.OBSERVED_ON_VEHICLE)
+            put("Trip A/B counters; dashboard-correlated candidates", Confidence.OBSERVED_ON_VEHICLE)
+            put("Gear / neutral sequence", Confidence.OBSERVED_ON_VEHICLE)
+            put("Five fuel segments; bar mapping has one anchor", Confidence.OBSERVED_ON_VEHICLE)
+            put("Economy, range and temperature calibration", Confidence.NEEDS_CAPTURE)
+            put("Remote horn / lights: unverified and disabled", Confidence.NEEDS_CAPTURE)
+            put("Raider pictogram compatibility", Confidence.NEEDS_CAPTURE)
+        } else if (model == VehicleModel.RAIDER_180) {
+            put("Raider 180 payload and display compatibility", Confidence.NEEDS_CAPTURE)
+            put("Remote horn / lights: unverified and disabled", Confidence.NEEDS_CAPTURE)
+        } else {
+            put("${model.displayName} reference inbound fields", Confidence.VERIFIED_FROM_APK)
+            put("${model.displayName} physical display compatibility", Confidence.NEEDS_CAPTURE)
+        }
+    }
 
     /** `BtData.isValidFrame()` accepts only 0x5A and 0x9B inbound. */
     override fun acceptsStartId(startId: Int): Boolean =
@@ -384,6 +392,8 @@ class NtorqDriver(
             if (raw.size != 20 || (raw[19].toInt() and 0xFF) != 0xFF) return null
             if (dataId in RaiderFrames.CHECKSUM_IDS && !RaiderFrames.validChecksum(raw)) return null
             if (dataId == 0x10) return RaiderFrames.SM1.decode(raw)
+            if (dataId == 0x11) return RaiderFrames.SM2.decode(raw)
+            if (dataId == 0x19) return RaiderFrames.SM3.decode(raw)
             if (dataId == 0x18) return RaiderFrames.SM4.decode(raw)
             if (layout != null) return layout.decode(raw)
         }
@@ -409,7 +419,8 @@ class NtorqDriver(
      *
      * [Keepalive] carries the layout transcribed from the official sender.
      */
-    override fun buildPing(state: DashState): ByteArray? = Keepalive.build(state)
+    override fun buildPing(state: DashState): ByteArray? = Keepalive.build(
+        state.copy(findMyScooter = state.findMyScooter && capabilities.findMyScooter))
 
     /** `0x5A 0x4E` — proven layout, see [PacketBuilder.navigationControl]. */
     override fun buildNavControl(nav: NavStep): ByteArray? =
@@ -476,6 +487,20 @@ object RaiderFrames {
     } + FieldSpec(Field.CHECKSUM, 18))
 
     val SM1 = NtorqFrames.SM1.copy(fields = NtorqFrames.SM1.fields.filterNot {
-        it.field == Field.TRIP_F_METER || it.field == Field.ENGINE_RPM
-    } + FieldSpec(Field.ENGINE_RPM, 16, length = 2))
+        it.field == Field.TRIP_F_METER || it.field == Field.ENGINE_RPM || it.field == Field.TIME_60KMPH
+    } + listOf(FieldSpec(Field.ENGINE_RPM, 16, length = 2),
+        FieldSpec(Field.AVERAGE_ECONOMY_CANDIDATE, 13)))
+
+    /** Gear and neutral flag corroborate each other; no countdown semantics inferred. */
+    val SM2 = NtorqFrames.SM2.copy(fields = NtorqFrames.SM2.fields.filterNot {
+        it.field == Field.CONNECTOR_STATUS
+    } + listOf(FieldSpec(Field.GEAR_POSITION, 5), FieldSpec(Field.NEUTRAL_STATUS, 13)))
+
+    /** Dashboard-correlated candidate trip counters, in tenths of km. Never economy bytes. */
+    val SM3 = FrameLayout(0x19, DataFrameType.SPEEDOMETER_DATA_5A_19_FRAME, listOf(
+        FieldSpec(Field.START_BYTE, 0), FieldSpec(Field.DATA_ID, 1),
+        FieldSpec(Field.TRIP_A_DISTANCE, 5, length = 2),
+        FieldSpec(Field.TRIP_B_DISTANCE, 8, length = 2),
+        FieldSpec(Field.CHECKSUM, 18), FieldSpec(Field.END_BYTE, 19),
+    ))
 }

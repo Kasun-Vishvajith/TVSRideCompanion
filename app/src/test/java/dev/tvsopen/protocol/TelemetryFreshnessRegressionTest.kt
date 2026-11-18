@@ -42,11 +42,11 @@ class TelemetryFreshnessRegressionTest {
             assertNull(t.forDisplay(time + 11000).engineRpm)
         }
     }
-    @Test fun `raw economy is retained when stale and never promoted to calibrated units`() {
-        val t = Telemetry(raiderProfile = true, averageEconomyRaw = 38, instantEconomyRaw = 206,
+    @Test fun `last trip counters remain visible when stale without inventing economy`() {
+        val t = Telemetry(raiderProfile = true, tripAKm = 123.4, tripBKm = 567.8,
             updatedAtById = mapOf(0x19 to 1000L))
-        assertEquals(38, t.forDisplay(20000).averageEconomyRaw)
-        assertEquals(206, t.forDisplay(20000).instantEconomyRaw)
+        assertEquals(123.4, t.forDisplay(20000).tripAKm!!, 0.00001)
+        assertEquals(567.8, t.forDisplay(20000).tripBKm!!, 0.00001)
         assertNull(t.forDisplay(20000).avgEconomyKmpl)
         assertEquals("Stale", t.evidence(0x19, false, 20000))
     }

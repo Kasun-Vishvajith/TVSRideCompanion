@@ -17,6 +17,8 @@ import dev.tvsopen.transport.ScooterBleService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -67,6 +69,7 @@ class NavigationBridge(
     private var controlJob: Job? = null
     private var exitJob: Job? = null
     private var pingJob: Job? = null
+    private val updates = Channel<Unit>(Channel.CONFLATED)
 
     /** 0x4E or 0x49; whichever the cluster accepts. Default 0x4E. */
     var navigationDataId: Int = OutboundId.NAVIGATION_CONTROL
@@ -90,10 +93,8 @@ class NavigationBridge(
 
     private var findMy = false
 
-    // Rolling offset for overflowing text. Advances once per send so a line
-    // wider than the row scrolls instead of clipping its tail. Reset whenever
-    // the instruction changes so a new turn starts at its head, not mid-scroll.
-    private var scrollTick = 0
+    // Scroll position follows elapsed instruction time, so frequent distance
+    // changes neither accelerate nor indefinitely freeze the text.
     private var lastInstructionKey: String? = null
 
     /**
@@ -119,7 +120,7 @@ class NavigationBridge(
 
     /** Flash the indicators and beep. Toggled into the keepalive packet. */
     fun setFindMyScooter(enabled: Boolean) {
-        findMy = enabled
+        findMy = enabled && driver.capabilities.findMyScooter
         Log.i(TAG, "find-my-scooter -> $enabled")
     }
 
@@ -133,23 +134,45 @@ class NavigationBridge(
         exitJob?.cancel()
         exitJob = null
         val generation = ++runGeneration
+        while (updates.tryReceive().isSuccess) { /* discard old session wakeups */ }
         controlJob = scope.launch {
             _hud.value = _hud.value.copy(active = true, navigationDataId = navigationDataId)
             var lastTick: Long? = null
             var showingMetrics = false
             var lastTextSwap = now()
+            var instructionStarted = now()
+            var nextRefresh = now()
+            var lastAttempt: Long? = null
+            var sentIdentity: List<Any?>? = null
+            var lastPrimary: String? = null
+            var lastSecondary: String? = null
             while (isActive) {
                 val cycleStarted = now()
                 val step = _hud.value.instruction
                 val safe = driver.model == VehicleModel.RAIDER_125 && compatibility()
                 val static = driver.model == VehicleModel.RAIDER_125 && stableText()
                 if (ready() && step != null) {
+                    val identity = instructionIdentity(step) + listOf(safe, static)
+                    val changed = identity != sentIdentity
+                    val periodic = cycleStarted >= nextRefresh
+                    if (!changed && !periodic) {
+                        withTimeoutOrNull((nextRefresh - now()).coerceAtLeast(1)) { updates.receive() }
+                        continue
+                    }
+                    // First change is immediate; only bursts within 150 ms are coalesced.
+                    val cooldown = lastAttempt?.let { 150L - (cycleStarted - it) } ?: 0L
+                    if (cooldown > 0) {
+                        withTimeoutOrNull(cooldown) { updates.receive() }
+                        continue
+                    }
+                    lastAttempt = cycleStarted
                     val key = "${step.title}|${step.street}"
                     if (key != lastInstructionKey) {
                         lastInstructionKey = key
-                        scrollTick = 0
+                        instructionStarted = cycleStarted
                     }
-                    val tick = if (static) 0 else scrollTick++
+                    val tick = if (static) 0 else
+                        ((cycleStarted - instructionStarted).coerceAtLeast(0) / controlIntervalMs.coerceAtLeast(1)).toInt()
                     val nav = step.toNavStep()
                     val street = step.displayLine(secondTextRowChars, tick)
                     val metrics = if (driver.model == VehicleModel.RAIDER_125)
@@ -164,6 +187,7 @@ class NavigationBridge(
                     trace("nav tick t=$time generation=$generation gapMs=${lastTick?.let { time - it }} " +
                         "rows=${control.rows} stable=$static active=true$details")
                     lastTick = time
+                    nextRefresh = cycleStarted + controlIntervalMs
                     driver.buildNavControl(control)?.let { frame ->
                         val accepted = write(frame)
                         _hud.value = _hud.value.copy(
@@ -174,20 +198,33 @@ class NavigationBridge(
                                 else -> null
                             },
                         )
-                        if (accepted) lastControl = control
+                        if (accepted) {
+                            lastControl = control
+                            sentIdentity = identity
+                        }
+                        nextRefresh = now() + controlIntervalMs
                     }
                     if (cycleStarted - lastTextSwap >= textSwapIntervalMs) {
                         showingMetrics = !showingMetrics
                         lastTextSwap = cycleStarted
                     }
                     val primary = if (!safe && secondary == null && showingMetrics) metrics else street
-                    driver.buildNavText(nav.copy(streetName = primary))?.let { write(it) }
-                    secondary?.let { write(it) }
+                    if (!isActive) break
+                    if (primary != lastPrimary) {
+                        driver.buildNavText(nav.copy(streetName = primary))?.let {
+                            if (write(it)) lastPrimary = primary
+                        }
+                    }
+                    if (secondary == null) lastSecondary = null
+                    else if (metrics != lastSecondary) {
+                        if (write(secondary)) lastSecondary = metrics
+                    }
                 } else if (step == null) {
                     sendExit("route-ended")
                 }
-                // Text shape and scrolling must never slow the control heartbeat.
-                delay((controlIntervalMs - (now() - cycleStarted)).coerceAtLeast(1))
+                if (step == null || !ready()) nextRefresh = now() + controlIntervalMs
+                // Wait without polling; a conflated update wakes this loop immediately.
+                withTimeoutOrNull((nextRefresh - now()).coerceAtLeast(1)) { updates.receive() }
             }
         }
     }
@@ -213,7 +250,6 @@ class NavigationBridge(
             if (generation == runGeneration) sendExit("mirroring-stopped")
         } else null
         if (!clearDisplay) lastControl = null
-        scrollTick = 0
         lastInstructionKey = null
         _hud.value = HudState(active = false)
     }
@@ -222,8 +258,14 @@ class NavigationBridge(
         if (_hud.value.instruction != step) {
             trace("nav instruction t=${now()} present=${step != null}")
         }
+        val changed = instructionIdentity(_hud.value.instruction) != instructionIdentity(step)
         _hud.value = _hud.value.copy(instruction = step)
+        if (changed) updates.trySend(Unit)
     }
+
+    private fun instructionIdentity(step: NavInstruction?): List<Any?> = step?.let {
+        listOf(it.title, it.street, it.distanceMeters, it.etaMinutes, it.pictogram, it.remainingTripMeters)
+    } ?: emptyList()
 
     private fun NavInstruction.toNavStep() = NavStep(
         distanceToTurnMeters = distanceMeters.coerceIn(0, 0xFFFF),

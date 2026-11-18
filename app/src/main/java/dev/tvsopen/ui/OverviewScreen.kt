@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
@@ -79,11 +80,6 @@ fun OverviewScreen(
     val shown = telemetry.forDisplay(now)
     val context = androidx.compose.ui.platform.LocalContext.current
     val rawEconomy = dev.tvsopen.prefs.RidePrefs.load(context).showRaiderEconomyRaw
-    fun economy(raw: Int?): String = when {
-        raw == null -> "Unavailable"
-        rawEconomy -> "$raw (raw, unverified)"
-        else -> "Unverified"
-    }
     Column(
         modifier
             .fillMaxSize()
@@ -118,7 +114,7 @@ fun OverviewScreen(
                 shown.engineRpm?.toString() ?: "—",
                 "rpm",
                 // Not "Top RPM": this is the current engine speed from 0x10
-                // bytes 17-18. Only the speed tile is a top-speed field, and
+                // bytes 16-17 on Raider. Only the speed tile is a top-speed field, and
                 // that is because the cluster sends one, not because we
                 // compute it.
                 "Engine RPM",
@@ -127,18 +123,34 @@ fun OverviewScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        BigStat(
-            Modifier.fillMaxWidth(),
-            Icons.Filled.Timer,
-            shown.timeTo60Sec?.let { String.format("%.1f", it) } ?: "—",
-            "sec",
-            "Best 0–60",
-            LocalTilePalette.current.neutral,
-        )
+        if (shown.raiderProfile) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                DistanceStat(Modifier.weight(1f), Icons.Filled.Settings,
+                    shown.gear?.let { if (it == 0) "N" else it.toString() } ?: "—", "Gear / neutral")
+                DistanceStat(Modifier.weight(1f), Icons.Filled.Speed,
+                    shown.averageSpeedKmh?.let { "$it km/h" } ?: "—", "Average speed")
+            }
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Trip counters")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                DistanceStat(Modifier.weight(1f), Icons.Filled.Route,
+                    telemetry.tripAKm?.let { String.format(java.util.Locale.US, "%.1f km", it) } ?: "—", "Trip A")
+                DistanceStat(Modifier.weight(1f), Icons.Filled.Route,
+                    telemetry.tripBKm?.let { String.format(java.util.Locale.US, "%.1f km", it) } ?: "—", "Trip B")
+            }
+            Text("Last received trip readings · ${telemetry.evidence(0x19, false, now)}",
+                style = MaterialTheme.typography.bodySmall)
+            Text("Trip and gear mappings are dashboard-correlated; verify on your motorcycle.",
+                style = MaterialTheme.typography.bodySmall)
+        } else {
+            BigStat(Modifier.fillMaxWidth(), Icons.Filled.Timer,
+                shown.timeTo60Sec?.let { String.format("%.1f", it) } ?: "—", "sec", "Best 0–60",
+                LocalTilePalette.current.neutral)
+        }
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Fuel")
-        FuelGauge(shown.fuelBars)
+        FuelGauge(shown.fuelBars, shown.fuelBarMax)
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Distance Travelled")
@@ -162,8 +174,7 @@ fun OverviewScreen(
         if (shown.raiderProfile) {
             Text("RPM: ${telemetry.evidence(0x10, false, now)} · " +
                 "Battery /10 candidate: ${telemetry.evidence(0x18, false, now)}", style = MaterialTheme.typography.bodySmall)
-            Text("Economy: ${telemetry.evidence(0x19, false, now)}. " +
-                    "Raw economy units unknown. Range, temperature and 0–60 unverified.",
+            Text("Range and instant economy: unavailable. Temperature calibration is unverified.",
                 style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(20.dp))
@@ -199,7 +210,7 @@ fun OverviewScreen(
                     false -> "OK"
                     null -> "—"
                 },
-                "Service",
+                if (shown.raiderProfile) "Service flag · unverified" else "Service",
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -217,9 +228,12 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                if (shown.raiderProfile) economy(telemetry.averageEconomyRaw)
+                if (shown.raiderProfile) {
+                    if (rawEconomy) telemetry.averageEconomyCandidate?.let { "$it (candidate)" } ?: "Unavailable"
+                    else "Unverified"
+                }
                 else shown.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
-                "Avg economy",
+                if (shown.raiderProfile) "Average economy candidate · units unverified" else "Avg economy",
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -227,7 +241,7 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                if (shown.raiderProfile) economy(telemetry.instantEconomyRaw)
+                if (shown.raiderProfile) "Unavailable"
                 else shown.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Instant economy",
             )
@@ -334,7 +348,7 @@ private fun DistanceStat(
             Text(
                 value,
                 style = NumberStyle,
-                fontSize = 24.sp,
+                fontSize = if (value.length > 12) 18.sp else 24.sp,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -355,7 +369,7 @@ private fun DistanceStat(
  * bar so "no data" and "empty" cannot be confused.
  */
 @Composable
-private fun FuelGauge(bars: Int?) {
+private fun FuelGauge(bars: Int?, maxBars: Int) {
     val filled = bars ?: 0
     Surface(
         Modifier.fillMaxWidth(),
@@ -377,7 +391,7 @@ private fun FuelGauge(bars: Int?) {
                     Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    repeat(Telemetry.FUEL_BAR_MAX) { i ->
+                    repeat(maxBars) { i ->
                         Box(
                             Modifier
                                 .weight(1f)
@@ -402,10 +416,10 @@ private fun FuelGauge(bars: Int?) {
             Spacer(Modifier.height(10.dp))
             Text(
                 // Three states, not two: a real level, no frame at all yet, and
-                // a frame whose value is outside the six-bar gauge and so cannot
+                // a frame whose value is outside this model's gauge and so cannot
                 // be a bar count. Collapsing the third into the second would
                 // report a level the cluster never sent.
-                if (bars != null) "$filled of ${Telemetry.FUEL_BAR_MAX} bars"
+                if (bars != null) "$filled of $maxBars bars"
                 else "No usable reading",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

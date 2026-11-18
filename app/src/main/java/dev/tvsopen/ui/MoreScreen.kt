@@ -116,6 +116,7 @@ fun MoreScreen(
                 rides = rides,
                 totalRides = totalRides,
                 totalDistanceKm = totalRideDistanceKm,
+                connected = connection.state == dev.tvsopen.transport.ConnectionState.CONNECTED,
             )
         }
 
@@ -163,7 +164,13 @@ fun MoreScreen(
                     // .label, not the enum name: this printed "CONNECTING".
                     Text("State: ${connection.state.label}")
                     Text("BLE writes: ${if (connection.writeReady) "Ready" else "Not ready"}")
-                    connection.address?.let { Text("MAC: $it") }
+                    connection.address?.let { address ->
+                        var revealAddress by remember { mutableStateOf(false) }
+                        Text(if (revealAddress) "Bluetooth address: $address" else "Bluetooth address hidden for privacy")
+                        OutlinedButton(onClick = { revealAddress = !revealAddress }) {
+                            Text(if (revealAddress) "Hide address" else "Show private address")
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onScan, modifier = Modifier.weight(1f)) {
@@ -220,6 +227,10 @@ fun MoreScreen(
             var mirrorMessages by remember { mutableStateOf(prefs.mirrorMessages) }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125) {
+                        Text("Raider call/message rendering is unverified. These switches request forwarding; they do not confirm cluster support.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -267,114 +278,7 @@ fun MoreScreen(
             }
         }
 
-        item {
-            Text("PROTOCOL TRANSPARENCY", style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        item {
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "What is verified, and what still needs your scooter",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Nucleus.describe().forEachIndexed { index, (model, facts) ->
-                        if (index > 0) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                color = MaterialTheme.colorScheme.outline,
-                            )
-                        }
-                        Text(
-                            model.displayName,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                        facts.forEach { (fact, confidence) ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    when (confidence) {
-                                        Confidence.VERIFIED_FROM_APK -> "●"
-                                        Confidence.INHERITED_UNVERIFIED -> "◐"
-                                        Confidence.NEEDS_CAPTURE -> "○"
-                                    },
-                                    color = when (confidence) {
-                                        Confidence.VERIFIED_FROM_APK -> MaterialTheme.colorScheme.primary
-                                        Confidence.INHERITED_UNVERIFIED -> MaterialTheme.colorScheme.tertiary
-                                        Confidence.NEEDS_CAPTURE -> MaterialTheme.colorScheme.outline
-                                    },
-                                    modifier = Modifier.padding(end = 8.dp),
-                                )
-                                Text(fact, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "● verified from the official APK   " +
-                            "◐ inherited, unverified   ○ needs capture",
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-            }
-        }
-
-        item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Pictograms (${Pictograms.ids.size})",
-                        style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Official app table. Two tables disagree upstream — " +
-                            "see docs/NAVIGATION.md if an arrow renders wrong.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-
-        item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Navigation display", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "Every instruction is compressed before it is sent: " +
-                            "Turn left onto Example Road becomes <- LFT to Example Rd.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "The arrow prefix marks the turn at a glance " +
-                            "(<- left, -> right, ^ straight, U U-turn, O roundabout).",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Text wider than the row scrolls one window per send " +
-                            "instead of clipping its tail.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Both cluster lines go out together (0x4F + 0x50, rows = 2); " +
-                            "a single alternating line when the second has nothing to show.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Compression, arrows and scrolling run on the phone and are " +
-                            "unit-tested. Whether the Ntorq renders both lines at once " +
-                            "still needs your scooter.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        item { VehicleEvidenceCard(connection.model) }
 
         item {
             Card(Modifier.fillMaxWidth()) {
@@ -471,9 +375,8 @@ private fun DozeCard() {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "Without this the phone sleeps mid-ride and the cluster drops the " +
-                    "connection. It does not give the app network access — it only " +
-                    "stops Android suspending it.",
+                "Android may restrict background Bluetooth when the screen is off. " +
+                    "A battery exemption can help continuity; it does not prove the cause of a connection drop.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(12.dp))
@@ -517,15 +420,15 @@ private fun DozeCard() {
 }
 
 @Composable
-private fun RidesCard(rides: List<Ride>, totalRides: Int, totalDistanceKm: Double) {
+private fun RidesCard(rides: List<Ride>, totalRides: Int, totalDistanceKm: Double, connected: Boolean) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                "$totalRides rides · ${String.format(Locale.US, "%.1f", totalDistanceKm)} km total",
+                "$totalRides completed rides · ${String.format(Locale.US, "%.1f", totalDistanceKm)} km total",
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                "Recorded on this phone from the cluster's odometer. No account, no cloud.",
+                "Distance comes from the motorcycle odometer. Simulated phone GPS movement does not add ride distance.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -541,7 +444,8 @@ private fun RidesCard(rides: List<Ride>, totalRides: Int, totalDistanceKm: Doubl
                     val whenText = df.format(Date(ride.startedAt))
                     val dist = String.format(Locale.US, "%.1f km", ride.distanceKm)
                     val dur = if (ride.inProgress) {
-                        "In progress · ${ride.durationMinutes()} min"
+                        if (connected) "In progress · ${ride.durationMinutes()} min"
+                        else "Open session · not connected"
                     } else {
                         "${ride.durationMinutes()} min"
                     }
@@ -641,7 +545,7 @@ private fun RaiderNavigationCard() {
                 AppSwitch(checked = rawEconomy, onCheckedChange = {
                     rawEconomy = it; prefs.showRaiderEconomyRaw = it
                 })
-                Text("Show raw economy candidates (units unknown)")
+                Text("Show average-economy candidate (units unverified)")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AppSwitch(checked = diagnostic, onCheckedChange = {
@@ -690,6 +594,49 @@ private fun ParkingCard() {
                 dev.tvsopen.session.Session.clearParked()
                 status = "Saved parking location removed"
             }) { Text("Forget parking location") }
+        }
+    }
+}
+
+
+@Composable
+private fun VehicleEvidenceCard(selected: dev.tvsopen.protocol.VehicleModel) {
+    var expanded by remember { mutableStateOf(false) }
+    var allModels by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Vehicle compatibility", style = MaterialTheme.typography.titleMedium)
+            Text(selected.displayName)
+            Text("Evidence labels explain what we know. They are not live connection indicators or a promise that every feature works.",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide technical details" else "Show technical details")
+            }
+            if (expanded) {
+                Text("● Reference code   ◆ Observed on vehicle   ◐ Inherited / provisional   ○ Needs confirmation",
+                    style = MaterialTheme.typography.bodySmall)
+                Nucleus.describe().filter { allModels || it.first == selected }.forEach { (model, facts) ->
+                    HorizontalDivider()
+                    Text(model.displayName, style = MaterialTheme.typography.titleSmall)
+                    facts.forEach { (fact, confidence) ->
+                        val mark = when (confidence) {
+                            Confidence.VERIFIED_FROM_APK -> "●"
+                            Confidence.OBSERVED_ON_VEHICLE -> "◆"
+                            Confidence.INHERITED_UNVERIFIED -> "◐"
+                            Confidence.NEEDS_CAPTURE -> "○"
+                        }
+                        Text("$mark $fact", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                OutlinedButton(onClick = { allModels = !allModels }) {
+                    Text(if (allModels) "Show selected vehicle only" else "Show other vehicle profiles")
+                }
+                Text("${Pictograms.ids.size} reference pictogram IDs; these are not all verified on your motorcycle.",
+                    style = MaterialTheme.typography.bodySmall)
+                Text("Navigation sends changed guidance promptly and refreshes control every 1.5 seconds when unchanged. " +
+                    "Text scrolling is separate. An unavailable direction uses the straight placeholder with a phone warning.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

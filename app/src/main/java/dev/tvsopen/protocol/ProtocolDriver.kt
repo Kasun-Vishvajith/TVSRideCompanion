@@ -132,6 +132,9 @@ interface ProtocolDriver {
 
 /** Confidence attached to every reverse-engineered fact. */
 enum class Confidence {
+    /** Observed in owner captures/dashboard comparison; not every physical interpretation is calibrated. */
+    OBSERVED_ON_VEHICLE,
+
     /** Confirmed by the official DEX. */
     VERIFIED_FROM_APK,
 

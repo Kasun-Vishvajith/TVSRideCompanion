@@ -29,12 +29,12 @@ object RaiderDiagnostics {
         }
         val valid = safe && dev.tvsopen.protocol.RaiderFrames.validChecksum(bytes)
         val values = if (!valid) "" else when (id) {
-            0x10 -> "rpm=${pair(16)};speed_raw=${u(2)};throttle_raw=${u(10)}"
-            0x11 -> "service_raw=${u(4)};mil_raw=${u(8)};status_raw=${u(10)}"
+            0x10 -> "rpm=${pair(16)};speed_raw=${u(2)};throttle_raw=${u(10)};average_economy_candidate_raw13=${u(13)}"
+            0x11 -> "gear_raw=${u(5)};neutral_flags_raw=${u(13)};state_raw=${u(3)};service_raw=${u(4)};mil_raw=${u(8)};status_raw=${u(10)}"
             0x18 -> "load_raw=${u(2)};map_raw=${u(6)};temp_raw=${u(8)};" +
                 "temp_minus40_candidate=${u(8)?.minus(40)};battery_div10_candidate=${u(11)?.div(10.0)};" +
                 "injection_raw=${pair(9)}"
-            0x19 -> "economy_raw8=${u(8)};economy_raw9=${u(9)}"
+            0x19 -> "tripA_tenths_candidate=${pair(5)};tripB_tenths_candidate=${pair(8)}"
             else -> ""
         }
         val row = Row(now, if (safe && !valid) "invalid_checksum" else "received", id,

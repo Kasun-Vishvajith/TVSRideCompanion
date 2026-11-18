@@ -98,7 +98,7 @@ fun HomeScreen(
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Your scooter")
+        SectionLabel("Your vehicle")
 
         // Card navigation rather than a value grid, mirroring the official app's
         // dashboard. The values live on the Overview tab where they belong.
@@ -123,7 +123,12 @@ fun HomeScreen(
 
         MirrorNavCard(navMirroring, hud, onNavMirrorChange)
         Spacer(Modifier.height(12.dp))
-        FindMyCard(findMyEnabled, onFindMyChange)
+        if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125 ||
+            connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_180) {
+            Text("Find parked motorcycle uses the saved phone location. " +
+                "Remote horn and light activation is not verified for Raider and is disabled.",
+                style = MaterialTheme.typography.bodySmall)
+        } else FindMyCard(findMyEnabled, onFindMyChange)
         Spacer(Modifier.height(12.dp))
         LastParkedCard(parked) {
             openParkedLocation(ctx, parked)
