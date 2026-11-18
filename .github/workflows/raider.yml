@@ -75,7 +75,7 @@ jobs:
           fi
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           for APK in raider/app/build/outputs/apk/{debug/app-debug,release/app-release}.apk; do
-            "$APKSIGNER" verify --print-certs "$APK" > /tmp/raider-certificate.txt
+            "$APKSIGNER" verify --print-certs "$APK" | tee /tmp/raider-certificate.txt
             grep -qi 'Signer #1 certificate SHA-256 digest: d7c06d3c58594b17b1fbe7d81ac1fdbe75398a104818323b2755026d38edb5d6' /tmp/raider-certificate.txt
           done
       - uses: actions/upload-artifact@v4
