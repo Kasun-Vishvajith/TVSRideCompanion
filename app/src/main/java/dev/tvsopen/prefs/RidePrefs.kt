@@ -83,6 +83,11 @@ class RidePrefs private constructor(private val ctx: Context) {
         get() = sp.getBoolean("raider_static_text", false)
         set(value) { sp.edit().putBoolean("raider_static_text", value).apply() }
 
+    /** Explicit diagnostic opt-in; raw economy never receives a km/L unit. */
+    var showRaiderEconomyRaw: Boolean
+        get() = sp.getBoolean("raider_raw_economy", false)
+        set(value) { sp.edit().putBoolean("raider_raw_economy", value).apply() }
+
     /** Mirror incoming phone calls to the cluster (caller name/number). */
     var mirrorPhoneCalls: Boolean
         get() = sp.getBoolean(KEY_MIRROR_PHONE_CALLS, true)

@@ -504,11 +504,25 @@ private fun NavigationStrip(hud: HudState) {
             // used to say "-1 m" while the dash said 0.
             val distance = hud.distanceMeters
             Text(
-                if (distance >= 0) "$distance m · ${hud.etaMinutes} min"
-                else "${hud.etaMinutes} min to arrival",
+                "Next maneuver: ${if (distance >= 0) "$distance m" else "—"} · ${hud.etaMinutes} min",
                 style = NumberStyle,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
+            Text("Trip remaining: ${hud.remainingTripMeters?.let { "$it m" } ?: "—"}" +
+                if (hud.totalHeld) " (recent reading)" else "",
+                style = MaterialTheme.typography.bodyMedium)
+            if (hud.pictogramId == null) {
+                Text("Direction unavailable: the cluster's straight arrow is a placeholder. Follow Maps guidance.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (hud.distanceMeters < 0) {
+                Text("Next-turn distance unavailable: the cluster's turn field is a placeholder.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (hud.remainingTripMeters == null) {
+                Text("Trip total unavailable: the cluster's total field is a placeholder, not a measured zero.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

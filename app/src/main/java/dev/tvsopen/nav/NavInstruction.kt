@@ -14,6 +14,9 @@ data class NavInstruction(
     /** Resolved cluster pictogram id, or null when unresolved. */
     val pictogram: Int?,
     val provider: String,
+    val remainingTripMeters: Int? = null,
+    val totalHeld: Boolean = false,
+    val direction: ManeuverReading = ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.NONE),
 ) {
     /**
      * Best single line for this cluster's display.
@@ -43,6 +46,17 @@ data class NavInstruction(
         val arrow = NavShortCodes.asciiArrow(pictogram)
         val full = if (arrow.isNotEmpty()) "$arrow $compressed" else compressed
         return RollingText.window(full, maxChars, tick)
+    }
+
+    /** Raider secondary text describes the trip, never a duplicate next-turn distance. */
+    fun tripLine(maxChars: Int, tick: Int = 0): String {
+        val total = remainingTripMeters
+        val value = when {
+            total == null -> "--"
+            total >= 1000 -> String.format(java.util.Locale.US, "%.1fKm", total / 1000.0)
+            else -> "${total}m"
+        }
+        return RollingText.window("TRIP $value", maxChars, tick)
     }
 
     /**

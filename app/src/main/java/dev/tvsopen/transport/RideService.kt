@@ -317,6 +317,9 @@ class RideService : android.app.Service() {
                             etaMinutes = hud.etaMinutes,
                             pictogram = hud.pictogramId,
                             provider = hud.provider.orEmpty(),
+                            remainingTripMeters = hud.remainingTripMeters,
+                            totalHeld = hud.totalHeld,
+                            direction = hud.direction,
                         ).takeIf { hud.active },
                     )
                 }

@@ -21,9 +21,10 @@ class NavNotificationLifecycle {
 }
 
 /** Hold one transient unknown/zero distance for the same instruction; a repeated zero is valid. */
-class NavContinuity {
+class NavContinuity(private val now: () -> Long = { System.nanoTime() / 1_000_000L }) {
     private var previous: NavInstruction? = null
     private var zeroPending = false
+    private var lastTotalAt = Long.MIN_VALUE
 
     fun accept(step: NavInstruction): NavInstruction {
         val old = previous
@@ -37,9 +38,16 @@ class NavContinuity {
             zeroPending = false
             step
         }
-        previous = result
-        return result
+        val total = step.remainingTripMeters
+        val withTotal = if (sameTurn && total == null && old?.remainingTripMeters != null &&
+            lastTotalAt != Long.MIN_VALUE && now() - lastTotalAt in 0L..6_000L) {
+            result.copy(remainingTripMeters = old.remainingTripMeters, totalHeld = true)
+        } else result.copy(totalHeld = false)
+        if (total != null) lastTotalAt = now()
+        else if (!sameTurn) lastTotalAt = Long.MIN_VALUE
+        previous = withTotal
+        return withTotal
     }
 
-    fun reset() { previous = null; zeroPending = false }
+    fun reset() { previous = null; zeroPending = false; lastTotalAt = Long.MIN_VALUE }
 }

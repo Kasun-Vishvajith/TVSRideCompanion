@@ -63,6 +63,7 @@ object DataExport {
                 .put("navigationMirroring", prefs.navigationMirroring)
                 .put("raiderPrimaryRowOnly", prefs.raiderPrimaryRowOnly)
                 .put("raiderStaticText", prefs.raiderStaticText)
+                .put("showRaiderEconomyRaw", prefs.showRaiderEconomyRaw)
                 .put("mirrorPhoneCalls", prefs.mirrorPhoneCalls)
                 .put("mirrorMessages", prefs.mirrorMessages)
                 .put("rideMode", prefs.rideMode)

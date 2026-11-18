@@ -56,7 +56,19 @@ class MapsNotificationListener : NotificationListenerService() {
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
         val ongoing = n.isOngoing
 
-        val parsed = NavParsing.parse(title, text, bigText, subText)
+        val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty()
+        val iconKind = notificationIconManeuver(n)
+        val expandedTitle = extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString().orEmpty()
+        val summary = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString().orEmpty()
+        val ticker = n.notification.tickerText?.toString().orEmpty()
+        val parsed = NavParsing.parse(title, text, bigText, subText,
+            textLines = lines + listOf(expandedTitle, summary, ticker), iconManeuver = iconKind)
+        if (dev.tvsopen.log.RaiderDiagnostics.enabled && pkg in allowedPackages) {
+            Log.i(TAG, "nav shape title=${title.isNotBlank()} text=${text.isNotBlank()} " +
+                "expanded=${bigText.isNotBlank()} summary=${subText.isNotBlank()} lines=${lines.size} " +
+                "largeIcon=${n.notification.getLargeIcon() != null} " +
+                "iconDirection=$iconKind semantic=${parsed.direction.kind} source=${parsed.direction.source}")
+        }
         val distance = parsed.distanceMeters
 
         val looksLikeNav = pkg in allowedPackages ||
@@ -104,6 +116,8 @@ class MapsNotificationListener : NotificationListenerService() {
             scheduleClear(key)
             return
         }
+        if (key != instructionKey) continuity.reset()
+        instructionKey = key
         lifecycle.posted(key)
 
         val step = NavInstruction(
@@ -113,11 +127,15 @@ class MapsNotificationListener : NotificationListenerService() {
             etaMinutes = parsed.etaMinutes,
             pictogram = parsed.pictogram,
             provider = pkg,
+            remainingTripMeters = parsed.remainingTripMeters,
+            direction = parsed.direction,
         )
         val stableStep = continuity.accept(step)
         Log.i(TAG, "nav parsed t=${android.os.SystemClock.elapsedRealtime()} " +
             "generation=${lifecycle.generation} provider=$pkg distanceKnown=${stableStep.distanceMeters >= 0} " +
-            "zeroHeld=${step.distanceMeters != stableStep.distanceMeters} pic=${stableStep.pictogram}")
+            "zeroHeld=${step.distanceMeters != stableStep.distanceMeters} pic=${stableStep.pictogram} " +
+            "maneuver=${stableStep.direction.kind} source=${stableStep.direction.source} " +
+            "totalKnown=${stableStep.remainingTripMeters != null} totalHeld=${stableStep.totalHeld}")
         Session.onHud {
             it.copy(
                 active = true,
@@ -126,6 +144,9 @@ class MapsNotificationListener : NotificationListenerService() {
                 distanceMeters = stableStep.distanceMeters,
                 etaMinutes = stableStep.etaMinutes,
                 pictogramId = stableStep.pictogram,
+                remainingTripMeters = stableStep.remainingTripMeters,
+                totalHeld = stableStep.totalHeld,
+                direction = stableStep.direction,
                 provider = stableStep.provider,
             )
         }
@@ -228,24 +249,37 @@ class MapsNotificationListener : NotificationListenerService() {
             // A callback can be missed during listener handover. Re-read only
             // ongoing Maps guidance before deciding the route actually ended.
             val active = runCatching { activeNotifications?.toList().orEmpty() }.getOrDefault(emptyList())
-            active.filter { it.packageName in allowedPackages && it.isOngoing }.forEach { n ->
-                val extras = n.notification.extras
-                val parsed = NavParsing.parse(
-                    extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
-                    extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
-                    extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
-                    extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(),
-                )
-                if (parsed.distanceMeters >= 0 || parsed.pictogram != null) postNav(n.key, n.packageName, parsed)
-            }
+            active.filter { it.packageName in allowedPackages && it.isOngoing }
+                .forEach { onNotificationPosted(it) }
             if (!lifecycle.expire(generation)) return@Runnable
             Log.i(TAG, "navigation ended t=${android.os.SystemClock.elapsedRealtime()} generation=$generation")
             continuity.reset()
-            Session.onHud { it.copy(active = false) }
+            instructionKey = null
+            Session.onHud { it.copy(active = false, instructionTitle = null, street = null,
+                distanceMeters = -1, remainingTripMeters = null, totalHeld = false,
+                etaMinutes = 0, pictogramId = null,
+                direction = ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.NONE)) }
             _navigating.value = false
             _instruction.value = null
             pendingClear = null
         }.also { handler.postDelayed(it, CLEAR_GRACE_MS) }
+    }
+
+    private var instructionKey: String? = null
+
+    /** Read only publicly exposed icon resource names from the posting app. Bitmap pixels remain unknown. */
+    private fun notificationIconManeuver(n: StatusBarNotification): ManeuverKind {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return ManeuverKind.UNKNOWN
+        val icons = listOfNotNull(n.notification.getLargeIcon(), n.notification.smallIcon)
+        val known = icons.mapNotNull { icon ->
+            if (icon.type != android.graphics.drawable.Icon.TYPE_RESOURCE) return@mapNotNull null
+            if (icon.resPackage != n.packageName) return@mapNotNull null
+            runCatching {
+                val resources = packageManager.getResourcesForApplication(n.packageName)
+                ManeuverText.fromIconResource(resources.getResourceEntryName(icon.resId))
+            }.getOrNull()?.takeUnless { it == ManeuverKind.UNKNOWN }
+        }.distinct()
+        return known.singleOrNull() ?: ManeuverKind.UNKNOWN
     }
 
     private val lifecycle = NavNotificationLifecycle()

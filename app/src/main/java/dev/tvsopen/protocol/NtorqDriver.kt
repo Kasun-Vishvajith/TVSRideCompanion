@@ -413,7 +413,8 @@ class NtorqDriver(
 
     /** `0x5A 0x4E` — proven layout, see [PacketBuilder.navigationControl]. */
     override fun buildNavControl(nav: NavStep): ByteArray? =
-        PacketBuilder.navigationControl(nav)
+        PacketBuilder.navigationControl(if (model == VehicleModel.RAIDER_125)
+            nav.copy(reuseTurnDistanceWhenMissing = false) else nav)
 
     /** `0x5B 0x4F` — 17-character text row. */
     override fun buildNavText(nav: NavStep): ByteArray? =

@@ -44,6 +44,8 @@ data class Telemetry(
     val milBlinkCode: Int? = null,
     val softwareVersion: String? = null,  // SM2 idx 7
     val avgEconomyKmpl: Int? = null,      // SM3 idx 8
+    val averageEconomyRaw: Int? = null,
+    val instantEconomyRaw: Int? = null,
     val instantEconomyKmpl: Int? = null,  // SM3 idx 9
     val distanceToEmptyKm: Int? = null,   // SM3 idx 11..12
     val engineTempC: Int? = null,         // SM4 idx 8
@@ -72,15 +74,15 @@ data class Telemetry(
         return if (d >= 0) d else null
     }
 
-    fun evidence(dataId: Int, verified: Boolean, now: Long = System.currentTimeMillis()): String {
+    fun evidence(dataId: Int, verified: Boolean, now: Long = TelemetryClock.nowMillis()): String {
         val at = updatedAtById[dataId] ?: return "Unknown"
-        if (now - at !in 0L until STALE_AFTER_MS) return "Stale"
+        if ((now - at).coerceAtLeast(0) >= STALE_AFTER_MS) return "Stale"
         return if (verified) "Verified mapping" else "Candidate / unverified"
     }
 
     /** Clear only expired groups; live speed must not refresh battery or status. */
     fun forDisplay(now: Long): Telemetry {
-        fun fresh(id: Int) = updatedAtById[id]?.let { now - it in 0L until STALE_AFTER_MS } == true
+        fun fresh(id: Int) = updatedAtById[id]?.let { (now - it).coerceAtLeast(0) < STALE_AFTER_MS } == true
         var shown = this
         if (!fresh(0x10)) shown = shown.copy(speedKmh = null, odometerKm = null, fuelBars = null,
             averageSpeedKmh = null, topSpeedKmh = null, throttlePercent = null, timeTo60Sec = null,
@@ -113,6 +115,10 @@ data class HudState(
     val distanceMeters: Int = -1,
     val etaMinutes: Int = 0,
     val pictogramId: Int? = null,
+    val remainingTripMeters: Int? = null,
+    val totalHeld: Boolean = false,
+    val direction: dev.tvsopen.nav.ManeuverReading = dev.tvsopen.nav.ManeuverReading(
+        dev.tvsopen.nav.ManeuverKind.UNKNOWN, dev.tvsopen.nav.ManeuverSource.NONE),
     val provider: String? = null,
     val framesSent: Int = 0,
     val lastError: String? = null,
@@ -278,6 +284,7 @@ object Session {
      */
     fun onFrame(frame: DecodedFrame) {
         val now = System.currentTimeMillis()
+        val receivedAt = TelemetryClock.nowMillis()
 
         // Raw integer divided once, here, into a Double — never an Int, so a
         // 7.3 s 0-60 run does not become 7, and a 3098.0 km odometer does not
@@ -328,7 +335,7 @@ object Session {
                 tripFMeters = if (raider) null else scaled(Field.TRIP_F_METER, 10.0)?.toInt() ?: cur.tripFMeters,
                 engineRpm = frame.field(Field.ENGINE_RPM)?.toInt()?.takeIf { it in 0..16000 },
                 lastFrameAt = now,
-                updatedAtById = cur.updatedAtById + (frame.dataId to now),
+                updatedAtById = cur.updatedAtById + (frame.dataId to receivedAt),
             ).also { trackRideDistance() }
 
             0x11 -> cur.copy(
@@ -341,10 +348,12 @@ object Session {
                 softwareVersion = frame.field(Field.SOFTWARE_VERSION)?.toInt()
                     ?.takeIf { it != 0xFF }?.let { "0x%X".format(it) },
                 lastFrameAt = now,
-                updatedAtById = cur.updatedAtById + (frame.dataId to now),
+                updatedAtById = cur.updatedAtById + (frame.dataId to receivedAt),
             )
 
             0x19 -> cur.copy(
+                averageEconomyRaw = frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt() ?: cur.averageEconomyRaw,
+                instantEconomyRaw = frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt() ?: cur.instantEconomyRaw,
                 avgEconomyKmpl = if (raider) null else frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt()
                     ?: cur.avgEconomyKmpl,
                 instantEconomyKmpl = if (raider) null else frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt()
@@ -352,14 +361,14 @@ object Session {
                 distanceToEmptyKm = if (raider) null else frame.field(Field.DISTANCE_TO_EMPTY)?.toInt()
                     ?: cur.distanceToEmptyKm,
                 lastFrameAt = now,
-                updatedAtById = cur.updatedAtById + (frame.dataId to now),
+                updatedAtById = cur.updatedAtById + (frame.dataId to receivedAt),
             )
 
             0x18 -> cur.copy(
                 engineTempC = if (raider) null else frame.field(Field.ENGINE_TEMPRATURE)?.toInt() ?: cur.engineTempC,
                 batteryVoltage = frame.field(Field.BATTERY_VOLTAGE)?.toInt() ?: cur.batteryVoltage,
                 lastFrameAt = now,
-                updatedAtById = cur.updatedAtById + (frame.dataId to now),
+                updatedAtById = cur.updatedAtById + (frame.dataId to receivedAt),
             )
 
             else -> cur.copy(lastFrameAt = now)

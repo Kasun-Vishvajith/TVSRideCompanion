@@ -165,6 +165,8 @@ data class NavStep(
     val rows: Int = 1,
     /** Mirrors the control frame's active flag at index 11. */
     val active: Boolean = true,
+    /** Legacy models reuse turn distance; Raider keeps route total independent. */
+    val reuseTurnDistanceWhenMissing: Boolean = true,
 )
 
 /**

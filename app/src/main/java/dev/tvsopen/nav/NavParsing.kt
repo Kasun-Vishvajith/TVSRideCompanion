@@ -22,7 +22,6 @@
 
 package dev.tvsopen.nav
 
-import dev.tvsopen.protocol.ManeuverResolver
 
 /** Result of reading one navigation notification. */
 data class ParsedNav(
@@ -34,6 +33,8 @@ data class ParsedNav(
     val distanceMeters: Int,
     val etaMinutes: Int,
     val pictogram: Int?,
+    val remainingTripMeters: Int? = null,
+    val direction: ManeuverReading = ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.NONE),
 )
 
 /**
@@ -143,7 +144,7 @@ object NavParsing {
      * or end of string.
      */
     private val DISTANCE_RE =
-        Regex("""(\d+(?:[.,]\d+)?)\s*(km|mi|ft|m)(?![A-Za-z])""", RegexOption.IGNORE_CASE)
+        Regex("""(?<![\d.,-])(\d[\d.,]*(?:[\u00A0\u202F]\d{3})*)\s*(km|mi|ft|m)(?![A-Za-z])""", RegexOption.IGNORE_CASE)
 
     /** `1 min`, `25 mins`, `1 hr`, `2 hours`. */
     private val ETA_RE =
@@ -165,28 +166,57 @@ object NavParsing {
         bigText: String,
         subText: String,
         nowMinutes: Int = nowMinutes(),
+        textLines: List<String> = emptyList(),
+        iconManeuver: ManeuverKind = ManeuverKind.UNKNOWN,
     ): ParsedNav {
-        val distance = extractDistance(title, text, bigText, subText)
+        // Summary fields describe the whole route, never a missing next-turn distance.
+        val distance = extractDistance(title, *listOf(text, bigText).filterNot(::isTripSummary).toTypedArray())
         val street = text.ifBlank { bigText }.ifBlank { subText }
-        // Having found the distance in the title, do not then display the title
-        // as the maneuver: "550 m" is not an instruction.
-        val maneuver = title.trim().takeUnless { isDistanceOnly(it) }.orEmpty()
+        val candidates = listOf(title to ManeuverSource.TITLE, text to ManeuverSource.TEXT,
+            bigText to ManeuverSource.BIG_TEXT) + textLines.map { it to ManeuverSource.TEXT_LINE }
+        val readings = candidates.map { (value, source) -> ManeuverReading(ManeuverText.read(value), source) }
+            .filter { it.kind != ManeuverKind.UNKNOWN }
+        val kinds = readings.map { it.kind }.distinct()
+        val conflict = kinds.size > 1 || (iconManeuver != ManeuverKind.UNKNOWN &&
+            kinds.isNotEmpty() && kinds.first() != iconManeuver)
+        val direction = when {
+            conflict -> ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.CONFLICT)
+            readings.isNotEmpty() -> readings.first()
+            iconManeuver != ManeuverKind.UNKNOWN -> ManeuverReading(iconManeuver, ManeuverSource.ICON_RESOURCE)
+            else -> ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.NONE)
+        }
+        val explicit = candidates.firstOrNull { ManeuverText.read(it.first) == direction.kind &&
+            direction.kind != ManeuverKind.UNKNOWN }?.first
+        val maneuver = explicit ?: title.trim().takeUnless { isDistanceOnly(it) }.orEmpty()
+        val total = (sequenceOf(subText, bigText, text) + textLines.asSequence()).filter(::isTripSummary)
+            .map { extractDistance(it).takeIf { d -> d >= 0 } }.filterNotNull().firstOrNull()
         return ParsedNav(
             maneuver = maneuver,
             street = street,
             distanceMeters = distance,
             etaMinutes = extractEtaMinutesAt(nowMinutes, subText, bigText, text, title),
-            // Tier 2 resolution: the cluster icon table is closed, so fall back
-            // to the words when the provider gives us no usable icon.
-            pictogram = ManeuverResolver.fromText("$maneuver $street"),
+            pictogram = RaiderPictograms.candidate(direction.kind),
+            remainingTripMeters = total,
+            direction = direction,
         )
     }
+
+    private fun isTripSummary(text: String): Boolean =
+        (text.contains('·') || text.contains('•') || text.contains('|') ||
+            text.contains("remaining", ignoreCase = true)) && extractDistance(text) >= 0 &&
+            (ETA_RE.containsMatchIn(text) || text.contains("ETA", ignoreCase = true) ||
+                text.contains("remaining", ignoreCase = true))
 
     fun extractDistance(vararg texts: String?): Int {
         for (t in texts) {
             if (t.isNullOrBlank()) continue
             val m = DISTANCE_RE.find(t) ?: continue
-            val value = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: continue
+            var number = m.groupValues[1].replace("\u00A0", "").replace("\u202F", "")
+            if (number.contains(',') && number.contains('.')) {
+                val decimal = if (number.lastIndexOf(',') > number.lastIndexOf('.')) ',' else '.'
+                number = number.replace(if (decimal == ',') "." else ",", "").replace(',', '.')
+            } else number = number.replace(',', '.')
+            val value = number.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 } ?: continue
             return when (m.groupValues[2].lowercase()) {
                 "km" -> (value * 1000).toInt()
                 "mi" -> (value * 1609).toInt()

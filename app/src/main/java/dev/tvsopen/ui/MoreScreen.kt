@@ -613,6 +613,7 @@ private fun RaiderNavigationCard() {
     val prefs = remember { RidePrefs.load(ctx) }
     var single by remember { mutableStateOf(prefs.raiderPrimaryRowOnly) }
     var static by remember { mutableStateOf(prefs.raiderStaticText) }
+    var rawEconomy by remember { mutableStateOf(prefs.showRaiderEconomyRaw) }
     var diagnostic by remember { mutableStateOf(dev.tvsopen.log.RaiderDiagnostics.enabled) }
     var exportStatus by remember { mutableStateOf("") }
     Card(Modifier.fillMaxWidth()) {
@@ -635,6 +636,12 @@ private fun RaiderNavigationCard() {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { dev.tvsopen.log.RaiderDiagnostics.mark(false) }) { Text("NAV hidden") }
                 OutlinedButton(onClick = { dev.tvsopen.log.RaiderDiagnostics.mark(true) }) { Text("NAV visible") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppSwitch(checked = rawEconomy, onCheckedChange = {
+                    rawEconomy = it; prefs.showRaiderEconomyRaw = it
+                })
+                Text("Show raw economy candidates (units unknown)")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AppSwitch(checked = diagnostic, onCheckedChange = {

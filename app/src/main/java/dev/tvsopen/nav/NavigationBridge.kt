@@ -152,18 +152,26 @@ class NavigationBridge(
                     val tick = if (static) 0 else scrollTick++
                     val nav = step.toNavStep()
                     val street = step.displayLine(secondTextRowChars, tick)
-                    val metrics = step.metricsLine(firstTextRowChars, tick)
+                    val metrics = if (driver.model == VehicleModel.RAIDER_125)
+                        step.tripLine(firstTextRowChars, tick) else step.metricsLine(firstTextRowChars, tick)
                     val secondary = if (safe) null else driver.buildNavTextSecondary(nav.copy(streetName = metrics))
                     val control = nav.copy(rows = if (secondary != null && metrics.isNotBlank()) 2 else 1)
                     val time = now()
                     trace("nav tick t=$time generation=$generation gapMs=${lastTick?.let { time - it }} " +
-                        "rows=${control.rows} stable=$static active=true")
+                        "rows=${control.rows} stable=$static active=true " +
+                        "maneuver=${step.direction.kind} source=${step.direction.source} " +
+                        "pictogram=${control.pictogram} arrowPlaceholder=${step.pictogram == null} " +
+                        "totalKnown=${step.remainingTripMeters != null} totalHeld=${step.totalHeld}")
                     lastTick = time
                     driver.buildNavControl(control)?.let { frame ->
                         val accepted = write(frame)
                         _hud.value = _hud.value.copy(
                             framesSent = _hud.value.framesSent + if (accepted) 1 else 0,
-                            lastError = if (accepted) null else "nav control rejected",
+                            lastError = if (!accepted) "nav control rejected" else when {
+                                driver.model == VehicleModel.RAIDER_125 && step.pictogram == null -> "Direction unknown: cluster straight arrow is a placeholder"
+                                driver.model == VehicleModel.RAIDER_125 && step.remainingTripMeters == null -> "Trip total unavailable; cluster total field is a zero placeholder"
+                                else -> null
+                            },
                         )
                         if (accepted) lastControl = control
                     }
@@ -219,7 +227,7 @@ class NavigationBridge(
     private fun NavInstruction.toNavStep() = NavStep(
         distanceToTurnMeters = distanceMeters.coerceIn(0, 0xFFFF),
         etaMinutes = etaMinutes,
-        remainingDistanceMeters = 0,
+        remainingDistanceMeters = remainingTripMeters ?: 0,
         // Tier 2 of the pictogram resolver: when the provider gives no usable
         // icon and the words do not resolve, send straight-ahead. Named, not a
         // bare 7, so the value stays checkable against the table above.

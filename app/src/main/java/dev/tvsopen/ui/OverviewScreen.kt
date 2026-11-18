@@ -73,10 +73,17 @@ fun OverviewScreen(
     telemetry: Telemetry,
     modifier: Modifier = Modifier,
 ) {
-    val now by androidx.compose.runtime.produceState(initialValue = System.currentTimeMillis()) {
-        while (true) { kotlinx.coroutines.delay(1000); value = System.currentTimeMillis() }
+    val now by androidx.compose.runtime.produceState(initialValue = dev.tvsopen.session.TelemetryClock.nowMillis()) {
+        while (true) { kotlinx.coroutines.delay(1000); value = dev.tvsopen.session.TelemetryClock.nowMillis() }
     }
     val shown = telemetry.forDisplay(now)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val rawEconomy = dev.tvsopen.prefs.RidePrefs.load(context).showRaiderEconomyRaw
+    fun economy(raw: Int?): String = when {
+        raw == null -> "Unavailable"
+        rawEconomy -> "$raw (raw, unverified)"
+        else -> "Unverified"
+    }
     Column(
         modifier
             .fillMaxSize()
@@ -155,7 +162,8 @@ fun OverviewScreen(
         if (shown.raiderProfile) {
             Text("RPM: ${telemetry.evidence(0x10, false, now)} · " +
                 "Battery /10 candidate: ${telemetry.evidence(0x18, false, now)}", style = MaterialTheme.typography.bodySmall)
-            Text("Economy, range, engine temperature and 0–60: Unverified. Firmware FF: Unknown.",
+            Text("Economy: ${telemetry.evidence(0x19, false, now)}. " +
+                    "Raw economy units unknown. Range, temperature and 0–60 unverified.",
                 style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(20.dp))
@@ -209,7 +217,8 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                shown.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
+                if (shown.raiderProfile) economy(telemetry.averageEconomyRaw)
+                else shown.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Avg economy",
             )
         }
@@ -218,7 +227,8 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                shown.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
+                if (shown.raiderProfile) economy(telemetry.instantEconomyRaw)
+                else shown.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Instant economy",
             )
             DistanceStat(

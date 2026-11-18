@@ -242,7 +242,7 @@ object PacketBuilder {
         putUInt16(b, 4, nav.etaMinutes.coerceIn(0, 0xFFFF))
 
         var remaining = nav.remainingDistanceMeters
-        if (remaining <= 0) remaining = d
+        if (remaining <= 0 && nav.reuseTurnDistanceWhenMissing) remaining = d
         putUInt24(b, 6, remaining.coerceIn(0, 0xFFFFFF))
 
         b[9] = nav.pictogram.toByte()
