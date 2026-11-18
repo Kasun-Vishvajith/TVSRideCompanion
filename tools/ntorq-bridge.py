@@ -599,8 +599,8 @@ class BleLayer:
                 return ["notify"]
 
             @dbus_property(PropertyAccess.READ)
-            def Notifying(self) -> "b":  # noqa: F821
-                return self._subscribers > 0
+            def Value(self) -> "ay":  # noqa: F821
+                return self._value
 
             @method()
             def StartNotify(self):
@@ -617,7 +617,13 @@ class BleLayer:
                     log.info("notify unsubscribed — link down")
                     asyncio.run_coroutine_threadsafe(outer.on_link(False), outer._loop)
 
+            @property
+            def notifying(self):
+                return self._subscribers > 0
+
             async def do_notify(self, frame: bytes):
+                if not self.notifying:
+                    raise RuntimeError("notify with no subscriber")
                 self._value = frame
                 self.emit_properties_changed({"Value": frame})
 

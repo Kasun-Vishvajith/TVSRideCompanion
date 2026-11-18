@@ -121,12 +121,20 @@ class MapsNotificationListener : NotificationListenerService() {
 
         val parsed = NavParsing.parse(title, text, bigText, subText)
         val distance = parsed.distanceMeters
+        val category = n.notification?.category
 
-        val looksLikeNav = pkg in allowedPackages ||
-            (extras.containsKey("android.app.extra.MAPS_MODE") ||
-                extras.containsKey("navigation.mode") ||
-                (ongoing && title.isNotEmpty() && (text.isNotEmpty() || bigText.isNotEmpty()) &&
-                    distance >= 0))
+        // Trust known maps packages and explicit navigation extras. For unknown
+        // packages, require CATEGORY_NAVIGATION as well as distance-like content:
+        // the loose "ongoing + has text + distance >= 0" fallback misfires on
+        // non-nav notifications whose text contains time units that look like
+        // metres (e.g. a system charging notification "1 h 13 m until full"
+        // parses "13 m" as 13 metres and was mirrored as a turn).
+        val hasNavExtras = extras.containsKey("android.app.extra.MAPS_MODE") ||
+            extras.containsKey("navigation.mode")
+        val looksLikeNav = pkg in allowedPackages || hasNavExtras ||
+            (ongoing && category == Notification.CATEGORY_NAVIGATION &&
+                title.isNotEmpty() && (text.isNotEmpty() || bigText.isNotEmpty()) &&
+                distance >= 0)
 
         if (looksLikeNav) {
             postNav(pkg, parsed)
@@ -134,7 +142,6 @@ class MapsNotificationListener : NotificationListenerService() {
         }
 
         val prefs = RidePrefs.load(this)
-        val category = n.notification?.category
         val isCall = category == Notification.CATEGORY_CALL ||
             extras.containsKey("android.telecom.extra.INCOMING_CALL_EXTRAS") ||
             extras.containsKey("android.telecom.extra.INCOMING_CALL_ADDRESS")
