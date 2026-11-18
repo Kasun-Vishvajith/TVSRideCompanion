@@ -271,10 +271,10 @@ object Log {
                     .sortedByDescending { it.name }
                     .forEach { f ->
                         w.write("===== ${f.name} (older) =====\n")
-                        f.forEachLine { w.write("$it\n") }
+                        f.forEachLine { w.write("${DiagnosticRedaction.redact(it)}\n") }
                     }
                 w.write("===== ${source.name} (current) =====\n")
-                source.forEachLine { w.write("$it\n") }
+                source.forEachLine { w.write("${DiagnosticRedaction.redact(it)}\n") }
             }
             out
         }.getOrNull()
@@ -305,9 +305,11 @@ object Log {
     fun log(level: Level, tag: String, message: String, t: Throwable? = null) {
         if (level < minLevel) return
         val sw = t?.let { StringWriter().also { w -> it.printStackTrace(PrintWriter(w)) }.toString() }
-        val record = LogRecord(System.currentTimeMillis(), level, tag, message, sw)
+        val safeMessage = DiagnosticRedaction.redact(message)
+        val record = LogRecord(System.currentTimeMillis(), level, tag, safeMessage,
+            sw?.let { DiagnosticRedaction.redact(it) })
 
-        AndroidLog.println(level.androidPriority, "$TAG/$tag", message)
+        AndroidLog.println(level.androidPriority, "$TAG/$tag", safeMessage)
 
         synchronized(lock) {
             if (ring.size >= RING_CAPACITY) ring.pollFirst()
@@ -443,7 +445,15 @@ object Log {
             return
         }
         val suffix = if (suppressed > 0) " (+$suppressed more)" else ""
-        log(Level.DEBUG, "BLE", "$direction ${hex(bytes)} (${bytes.size} bytes)$suffix")
+        val outbound = direction.trim() == "OUT"
+        val start = bytes.firstOrNull()?.toInt()?.and(0xFF)
+        val payload = when {
+            outbound && start == 0x5B && id != 0x4A -> "5B %02X [text/identity redacted]".format(id)
+            outbound && start == 0x5A && id == 0x4E ->
+                "5A 4E [distance redacted] rows=${bytes.getOrNull(10)} active=${bytes.getOrNull(11)}"
+            else -> hex(bytes)
+        }
+        log(Level.DEBUG, "BLE", "$direction $payload (${bytes.size} bytes)$suffix")
     }
 
     /**

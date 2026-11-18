@@ -98,6 +98,10 @@ fun MoreScreen(
         }
 
         item { AppearanceCard() }
+        item { ParkingCard() }
+        if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125) {
+            item { RaiderNavigationCard() }
+        }
 
         item { RiderNameCard(name = riderName, onNameChange = onRiderNameChange) }
 
@@ -158,6 +162,7 @@ fun MoreScreen(
                     Text(connection.model.displayName, style = MaterialTheme.typography.titleMedium)
                     // .label, not the enum name: this printed "CONNECTING".
                     Text("State: ${connection.state.label}")
+                    Text("BLE writes: ${if (connection.writeReady) "Ready" else "Not ready"}")
                     connection.address?.let { Text("MAC: $it") }
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -377,7 +382,7 @@ fun MoreScreen(
                     Icon(Icons.Filled.Science, null)
                     Text("TVSRide", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "No account. No TVS server. No INTERNET permission.",
+                        "No account. No TVS server. Data stays on this phone.",
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                     )
@@ -597,6 +602,87 @@ private fun AppearanceCard() {
                     modifier = Modifier.weight(1f),
                 )
             }
+        }
+    }
+}
+
+
+@Composable
+private fun RaiderNavigationCard() {
+    val ctx = LocalContext.current
+    val prefs = remember { RidePrefs.load(ctx) }
+    var single by remember { mutableStateOf(prefs.raiderPrimaryRowOnly) }
+    var static by remember { mutableStateOf(prefs.raiderStaticText) }
+    var diagnostic by remember { mutableStateOf(dev.tvsopen.log.RaiderDiagnostics.enabled) }
+    var exportStatus by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Raider stationary NAV test", style = MaterialTheme.typography.titleMedium)
+            Text("Physical display state is unknown until you mark it. Test while parked. " +
+                "Change one switch at a time. Both are unverified experiments; turn both off for original rendering.")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppSwitch(checked = single, onCheckedChange = {
+                    single = it; prefs.raiderPrimaryRowOnly = it
+                })
+                Text("Primary row only (omit secondary)")
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppSwitch(checked = static, onCheckedChange = {
+                    static = it; prefs.raiderStaticText = it
+                })
+                Text("Static text (no scrolling)")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { dev.tvsopen.log.RaiderDiagnostics.mark(false) }) { Text("NAV hidden") }
+                OutlinedButton(onClick = { dev.tvsopen.log.RaiderDiagnostics.mark(true) }) { Text("NAV visible") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppSwitch(checked = diagnostic, onCheckedChange = {
+                    diagnostic = it; dev.tvsopen.log.RaiderDiagnostics.enabled = it
+                    if (!it) dev.tvsopen.log.RaiderDiagnostics.clear()
+                })
+                Text("Local telemetry and command trace")
+            }
+            Text("Capture keeps 10 seconds before and 20 seconds after a mark, sampled per ID. " +
+                "Raw values are candidates, not calibrated measurements or ECU fault codes.")
+            OutlinedButton(onClick = {
+                exportStatus = runCatching {
+                    val file = dev.tvsopen.log.RaiderDiagnostics.export(java.io.File(ctx.filesDir, "diagnostics"))
+                    "Saved files/diagnostics/${file.name} locally"
+                }.getOrElse { "Export failed" }
+            }) { Text("Export marked capture") }
+            if (exportStatus.isNotBlank()) Text(exportStatus)
+        }
+    }
+}
+
+@Composable
+private fun ParkingCard() {
+    val ctx = LocalContext.current
+    val locator = remember { dev.tvsopen.session.ParkingLocator(ctx) }
+    var status by remember { mutableStateOf("Request one foreground fix; no background permission needed.") }
+    androidx.compose.runtime.DisposableEffect(locator) { onDispose { locator.cancel() } }
+    val request = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        if (granted.values.any { it }) locator.request { status = it }
+        else status = "Location permission declined; Bluetooth and navigation remain available"
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Parking location", style = MaterialTheme.typography.titleMedium)
+            Text(status)
+            Button(onClick = {
+                status = "Waiting for a recent fix (up to 15 seconds)…"
+                request.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION))
+            }) { Text("Mark my parking") }
+            OutlinedButton(onClick = {
+                locator.cancel()
+                RidePrefs.load(ctx).saveParked(0, null)
+                dev.tvsopen.session.Session.clearParked()
+                status = "Saved parking location removed"
+            }) { Text("Forget parking location") }
         }
     }
 }

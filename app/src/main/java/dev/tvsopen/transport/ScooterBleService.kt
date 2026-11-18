@@ -31,7 +31,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 enum class ConnectionState { DISCONNECTED, SCANNING, CONNECTING, CONNECTED, RECONNECTING }
@@ -59,20 +60,10 @@ data class BleFrame(val direction: Direction, val bytes: ByteArray, val atMillis
 }
 
 /**
- * One GATT link to one cluster.
- *
- * ## Why the write mutex
- *
- * Android's BLE stack is not thread-safe. With a navigation broadcast, a
- * keepalive ping and button events all in flight, concurrent
- * `writeCharacteristic` calls produce status-133 disconnects. Every write here
- * goes through a [Mutex], serialising them into a FIFO queue.
- *
- * ## Why write-without-response
- *
- * Upstream sets `getCharacteristicsWriteType() == 2`
- * (`WRITE_TYPE_NO_RESPONSE`) and requests a 512-byte MTU on every petrol
- * model, so a full frame fits in one packet and no flow control is needed.
+ * One GATT link. The mutex covers completion of response writes, not just API
+ * submission. Select the write type from discovered properties: the Raider
+ * capture reports 0x08 (WRITE), which does not advertise WRITE_NO_RESPONSE.
+ * GATT completion is transport evidence, never a physical-display ACK.
  */
 class ScooterBleService(private val context: Context) {
 
@@ -92,7 +83,17 @@ class ScooterBleService(private val context: Context) {
     // failure this class had.
     @Volatile
     private var gatt: BluetoothGatt? = null
+    @Volatile
     private var writeChar: BluetoothGattCharacteristic? = null
+    private val _ready = MutableStateFlow(false)
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+    val isReady: Boolean get() = _ready.value
+    private val writeSequence = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var connectionGeneration = 0L
+    private data class PendingWrite(val client: BluetoothGatt, val characteristic: UUID,
+        val sequence: Long, val result: CompletableDeferred<Int>)
+    @Volatile private var pendingWrite: PendingWrite? = null
+    private var cccdFailed = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -121,6 +122,7 @@ class ScooterBleService(private val context: Context) {
 
     // ---- lifecycle ----
 
+    @Synchronized
     @SuppressLint("MissingPermission")
     fun connect(address: String, config: GattConfig = GattConfig.DEFAULT): Boolean {
         if (gatt != null) return false
@@ -128,10 +130,11 @@ class ScooterBleService(private val context: Context) {
         val device: BluetoothDevice = try {
             a.getRemoteDevice(address)
         } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "bad address $address: ${e.message}")
+            Log.w(TAG, "invalid cluster address")
             return false
         }
         _state.value = ConnectionState.CONNECTING
+        connectionGeneration++
 
         gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             device.connectGatt(context, config.autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -169,9 +172,12 @@ class ScooterBleService(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     private fun closeGatt(g: BluetoothGatt) {
-        writeChar = null
-        mainHandler.removeCallbacksAndMessages(null)
         if (gatt === g) {
+            _ready.value = false
+            pendingWrite?.takeIf { it.client === g }?.result?.complete(-1)
+            writeChar = null
+            synchronized(cccdLock) { cccdQueue.clear() }
+            mainHandler.removeCallbacksAndMessages(null)
             gatt = null
             discoveryStarted = false
         }
@@ -179,74 +185,85 @@ class ScooterBleService(private val context: Context) {
             .onFailure { Log.w(TAG, "gatt close: ${it.message}") }
     }
 
-    /**
-     * Enqueue a write. Never throws; BLE failures are reported through
-     * [ConnectionState] and the log, because a dropped frame is recoverable
-     * and an exception in a caller coroutine is not.
-     */
-    suspend fun write(bytes: ByteArray): Boolean = writeLock.withLock {
-        val g = gatt
-        val ch = writeChar
-        if (g == null || ch == null || _state.value != ConnectionState.CONNECTED) {
-            // Log the *first* drop of an outage, not every attempt.
-            //
-            // The keepalive pings every 2 s for the whole session, so with the
-            // link down this line fired 30 times a minute, forever. It drowned
-            // the log: a 13-hour capture was mostly one repeated message, and the
-            // frames that actually explain a fault became the hard part to find.
-            // The per-frame dedup in `Log.frame` cannot help here because these
-            // writes never reach it — they are dropped before any frame is built.
-            //
-            // Reset on the first successful write, so each outage is reported
-            // exactly once and a reconnect is not silent.
-            if (!dropWarned) {
-                dropWarned = true
-                val why = when {
-                    g == null -> "no gatt"
-                    ch == null -> "no write characteristic"
-                    else -> "state is ${_state.value}"
+    /** Serialise through response completion; ambiguous timeout blocks later writes on this link. */
+    @SuppressLint("MissingPermission")
+    suspend fun write(bytes: ByteArray): Boolean {
+        val seq = writeSequence.incrementAndGet()
+        val queuedAt = android.os.SystemClock.elapsedRealtime()
+        val id = bytes.getOrNull(1)?.toInt()?.and(0xFF)
+        fun trace(message: String) {
+            if (dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
+                "tx t=${android.os.SystemClock.elapsedRealtime()} connection=$connectionGeneration seq=$seq id=$id $message")
+        }
+        trace("enqueued")
+        return writeLock.withLock {
+            val g = gatt
+            val ch = writeChar
+            if (g == null || ch == null || !isReady || _state.value != ConnectionState.CONNECTED) {
+                trace("rejected reason=not-ready")
+                if (!dropWarned) {
+                    dropWarned = true
+                    Log.w(TAG, "link not ready, dropping writes")
                 }
-                Log.w(TAG, "link not ready, dropping writes ($why)")
+                return@withLock false
             }
-            return@withLock false
-        }
-        // Explicit <Boolean>: the lambda's last expression is a conditional on
-        // `cont.resume(...)` which returns Unit, so inference would pick the
-        // wrong T and `ok` would be typed as the continuation result itself.
-        val ok = suspendCancellableCoroutine<Boolean> { cont ->
-            val result = try {
-                // The 3-argument overload exists only on API 33+. Calling it on
-                // an older phone throws NoSuchMethodError and takes the writer
-                // down, so the legacy path sets the value and type on the
-                // characteristic first — that is the only form API 26-32 has.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    g.writeCharacteristic(
-                        ch, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE,
-                    ) == BluetoothGatt.GATT_SUCCESS
-                } else {
-                    @Suppress("DEPRECATION")
-                    ch.value = bytes
-                    @Suppress("DEPRECATION")
-                    ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    @Suppress("DEPRECATION")
-                    g.writeCharacteristic(ch)
+            val type = when (GattWritePolicy.mode(ch.properties)) {
+                GattWriteMode.RESPONSE -> BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                GattWriteMode.NO_RESPONSE -> BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                null -> { trace("rejected reason=unsupported-properties"); return@withLock false }
+            }
+            val pending = if (type == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                PendingWrite(g, ch.uuid, seq, CompletableDeferred()) else null
+            pendingWrite = pending
+            trace("submit waitMs=${android.os.SystemClock.elapsedRealtime() - queuedAt} type=$type")
+            var settled = false
+            // Finish an accepted GATT operation even when a nav loop is cancelled;
+            // stopping a route must not desynchronise or reset the BLE connection.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    val accepted = try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            g.writeCharacteristic(ch, bytes, type) == BluetoothGatt.GATT_SUCCESS
+                        } else {
+                            @Suppress("DEPRECATION")
+                            ch.value = bytes
+                            @Suppress("DEPRECATION")
+                            ch.writeType = type
+                            @Suppress("DEPRECATION")
+                            g.writeCharacteristic(ch)
+                        }
+                    } catch (e: SecurityException) {
+                        Log.e(TAG, "write refused (permission)")
+                        false
+                    }
+                    trace("accepted=$accepted (not render ACK)")
+                    if (!accepted) { settled = true; return@withContext false }
+                    emit(BleFrame(BleFrame.Direction.OUTBOUND, bytes.copyOf(), System.currentTimeMillis()))
+                    val status = if (pending != null) {
+                        withTimeoutOrNull(WRITE_TIMEOUT_MS) { pending.result.await() }
+                    } else {
+                        // Preserve the previous no-response path only where the peripheral advertises it.
+                        kotlinx.coroutines.delay(50)
+                        BluetoothGatt.GATT_SUCCESS
+                    }
+                    settled = status != null
+                    if (status == null) {
+                        _ready.value = false
+                        Log.w(TAG, "write timeout t=${android.os.SystemClock.elapsedRealtime()} seq=$seq; " +
+                            "readiness lost, ignoring late completion; no automatic GATT restart")
+                    }
+                    val ok = status == BluetoothGatt.GATT_SUCCESS && g === gatt && isReady
+                    trace("complete status=$status success=$ok (not render ACK)")
+                    if (ok) dropWarned = false
+                    ok
+                } finally {
+                    // Cancellation after submission is also ambiguous: never let its late
+                    // response complete another operation on the same characteristic.
+                    if (!settled && pending != null && g === gatt) _ready.value = false
+                    if (pendingWrite === pending) pendingWrite = null
                 }
-            } catch (e: SecurityException) {
-                Log.e(TAG, "write refused: ${e.message}")
-                false
             }
-            // resumeWith, not resume: the `resume` extension on Continuation is
-            // ambiguous against CancellableContinuation's member here, and the
-            // inferred type leaks into `ok`.
-            cont.resumeWith(Result.success(result))
         }
-        if (ok) {
-            // Re-arm the outage warning: the link came back, so the next drop is
-            // news again rather than a continuation of the one already reported.
-            dropWarned = false
-            emit(BleFrame(BleFrame.Direction.OUTBOUND, bytes, System.currentTimeMillis()))
-        }
-        ok
     }
 
     private fun emit(frame: BleFrame) {
@@ -265,9 +282,10 @@ class ScooterBleService(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (g !== gatt) return
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "GATT connected (status=$status)")
+                    Log.i(TAG, "GATT connected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
                     _state.value = ConnectionState.CONNECTED
                     try {
                         // Discovery must NOT be issued while the MTU exchange is
@@ -290,7 +308,7 @@ class ScooterBleService(private val context: Context) {
                 }
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.w(TAG, "GATT disconnected (status=$status)")
+                    Log.w(TAG, "GATT disconnected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
                     _state.value = ConnectionState.DISCONNECTED
                     // Must release the client here, not just clear the
                     // characteristic: `connect()` bails out while `gatt` is
@@ -303,9 +321,10 @@ class ScooterBleService(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (g !== gatt || status != BluetoothGatt.GATT_SUCCESS) return
             val svc = resolveVerifiedService(g)
             if (svc == null) {
-                Log.w(TAG, "no verified SmartXonnect service on ${g.device.address}")
+                Log.w(TAG, "no verified SmartXonnect service")
                 return
             }
             val ch = svc.getCharacteristic(UUID.fromString(Gatt.WRITE))
@@ -332,6 +351,7 @@ class ScooterBleService(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
+            if (g !== gatt) return
             emit(BleFrame(BleFrame.Direction.INBOUND, value, System.currentTimeMillis()))
         }
 
@@ -341,12 +361,23 @@ class ScooterBleService(private val context: Context) {
             g: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            if (g !== gatt) return
             @Suppress("DEPRECATION")
             val v = characteristic.value ?: return
             emit(BleFrame(BleFrame.Direction.INBOUND, v, System.currentTimeMillis()))
         }
 
+        override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            if (g !== gatt) return
+            val pending = pendingWrite?.takeIf { it.client === g && it.characteristic == characteristic.uuid }
+            if (dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
+                "tx callback t=${android.os.SystemClock.elapsedRealtime()} connection=$connectionGeneration seq=${pending?.sequence} " +
+                    "status=$status (transport completion, not render ACK)")
+            pending?.result?.complete(status)
+        }
+
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (g !== gatt) return
             Log.i(TAG, "MTU=$mtu status=$status")
             // The MTU exchange is done, so discovery is safe now. Calling this
             // here rather than from onConnectionStateChange is what makes
@@ -359,7 +390,9 @@ class ScooterBleService(private val context: Context) {
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
-            Log.d(TAG, "descriptor write status=$status")
+            if (g !== gatt) return
+            if (status != BluetoothGatt.GATT_SUCCESS) cccdFailed = true
+            Log.i(TAG, "descriptor t=${android.os.SystemClock.elapsedRealtime()} status=$status")
             // One CCCD write at a time: firing the next while one is pending
             // makes the stack refuse it, so the queue advances here.
             writeNextCccd(g)
@@ -373,9 +406,14 @@ class ScooterBleService(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun writeNextCccd(g: BluetoothGatt) {
+        if (g !== gatt) return
         val next = synchronized(cccdLock) {
             if (cccdQueue.isNotEmpty()) cccdQueue.removeFirst() else null
-        } ?: return
+        } ?: run {
+            _ready.value = !cccdFailed
+            Log.i(TAG, "BLE ready t=${android.os.SystemClock.elapsedRealtime()} ready=$isReady")
+            return
+        }
         // The two writeDescriptor overloads differ in return type: the API-33 one
         // returns an Int status code, the deprecated one a Boolean. An
         // if/else mixing them infers `Comparable & Serializable`, so
@@ -400,7 +438,8 @@ class ScooterBleService(private val context: Context) {
             }
         }
         if (!ok) {
-            Log.w(TAG, "CCCD write refused; continuing with the rest")
+            cccdFailed = true
+            Log.w(TAG, "CCCD write refused; link remains not ready")
             writeNextCccd(g)
         }
     }
@@ -484,10 +523,11 @@ class ScooterBleService(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun enableNotifications(g: BluetoothGatt, svc: android.bluetooth.BluetoothGattService) {
+        cccdFailed = false
         val pending = ArrayList<BluetoothGattDescriptor>()
         for (uuid in listOf(Gatt.READ, Gatt.DEVICE_INFO)) {
             val ch = svc.getCharacteristic(UUID.fromString(uuid)) ?: continue
-            g.setCharacteristicNotification(ch, true)
+            if (!g.setCharacteristicNotification(ch, true)) cccdFailed = true
             val cccd = ch.getDescriptor(CCCD)
             // Parentheses are required: `and` is an infix *function*, not a bitwise
             // operator, so `props and FLAG != 0` does not parse as intended.
@@ -495,7 +535,10 @@ class ScooterBleService(private val context: Context) {
             if (cccd != null && canNotify) pending += cccd
             else Log.d(TAG, "no notifiable CCCD for $uuid")
         }
-        if (pending.isEmpty()) return
+        if (pending.isEmpty()) {
+            Log.w(TAG, "no notification descriptors; link remains not ready")
+            return
+        }
         synchronized(cccdLock) {
             cccdQueue.clear()
             cccdQueue.addAll(pending)
@@ -505,6 +548,7 @@ class ScooterBleService(private val context: Context) {
 
     companion object {
         private const val TAG = "ScooterBle"
+        private const val WRITE_TIMEOUT_MS = 2_000L
 
         /**
          * How long to wait for `onMtuChanged` before starting discovery anyway.

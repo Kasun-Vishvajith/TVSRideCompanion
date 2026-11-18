@@ -14,69 +14,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * One turn-by-turn instruction, normalised across map providers.
- */
-data class NavInstruction(
-    /** "Turn left", "Roundabout, exit 2", … — the maneuver. */
-    val title: String,
-    /** "Onto NH44" — the street. */
-    val street: String,
-    /** Metres to the maneuver; -1 when unknown. */
-    val distanceMeters: Int,
-    val etaMinutes: Int = 0,
-    /** Resolved cluster pictogram id, or null when unresolved. */
-    val pictogram: Int?,
-    val provider: String,
-) {
-    /**
-     * Best single line for this cluster's display.
-     *
-     * The maneuver first, the street second. The provider that is actually in
-     * use here (`com.tvsm.connect`) posts the maneuver as the title and trip
-     * metrics (`"2.32 km • 3 min • 11:40 AM ETA"`) as the text — preferring the
-     * street therefore showed an ETA fragment where the turn instruction
-     * belongs, on both lines at once. The Google Maps shape is the mirror:
-     * its title is distance-only (`"550 m"`), so [NavParsing] leaves the
-     * maneuver empty and this falls through to the street, which is the road.
-     *
-     * The raw instruction is compressed to short codes ([NavShortCodes]) so a
-     * 10/12-character row fits far more, prefixed with an ASCII arrow for
-     * glanceability, and rolled ([RollingText]) when it still overflows so the
-     * tail scrolls into view instead of being clipped. [tick] advances once
-     * per bridge send; pass 0 for a static snapshot.
-     *
-     * The 17-byte payload is still sent; the bytes beyond the row are
-     * zero-padded and the `0xFF` terminator stays at index 19, because that is
-     * the frame shape the cluster expects. Only the character count changed.
-     */
-    fun displayLine(maxChars: Int = RowChars.NTORQ, tick: Int = 0): String {
-        val combined = listOf(title, street)
-            .firstOrNull { it.isNotBlank() } ?: "Navigating"
-        val compressed = NavShortCodes.compress(combined)
-        val arrow = NavShortCodes.asciiArrow(pictogram)
-        val full = if (arrow.isNotEmpty()) "$arrow $compressed" else compressed
-        return RollingText.window(full, maxChars, tick)
-    }
-
-    /**
-     * The ETA / distance line, in TVS's own rendering.
-     *
-     * `10Km 700m` for multi-kilometre distances (as the manual prints it),
-     * plain metres below that. Truncated to the row: without the take, a
-     * `"ETA 3m 2Km 320m"` line overran the 10-character maneuver row and the
-     * cluster clipped the distance off the end. Rolls like [displayLine] when
-     * it still overflows.
-     */
-    fun metricsLine(maxChars: Int = RowChars.NTORQ_LINE_1, tick: Int = 0): String {
-        val d = if (distanceMeters >= 1000)
-            "${distanceMeters / 1000}Km ${distanceMeters % 1000}m"
-        else "${distanceMeters}m"
-        val raw = if (etaMinutes > 0) "ETA ${etaMinutes}m $d" else d
-        return RollingText.window(NavShortCodes.compress(raw), maxChars, tick)
-    }
-}
-
-/**
  * Reads turn-by-turn out of *any* maps app.
  *
  * This is the same approach as the official app
@@ -129,7 +66,7 @@ class MapsNotificationListener : NotificationListenerService() {
                     distance >= 0))
 
         if (looksLikeNav) {
-            postNav(pkg, parsed)
+            postNav(n.key, pkg, parsed)
             return
         }
 
@@ -160,7 +97,15 @@ class MapsNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun postNav(pkg: String, parsed: ParsedNav) {
+    private fun postNav(key: String, pkg: String, parsed: ParsedNav) {
+        // Package membership alone also matches Maps downloads and summaries.
+        if ((parsed.distanceMeters < 0 && parsed.pictogram == null) ||
+            (parsed.maneuver.isBlank() && parsed.street.isBlank())) {
+            scheduleClear(key)
+            return
+        }
+        lifecycle.posted(key)
+
         val step = NavInstruction(
             title = parsed.maneuver,
             street = parsed.street,
@@ -169,25 +114,24 @@ class MapsNotificationListener : NotificationListenerService() {
             pictogram = parsed.pictogram,
             provider = pkg,
         )
-        Log.i(
-            TAG,
-            "nav from $pkg: '${step.title}' / '${step.street}' " +
-                "d=${step.distanceMeters}m eta=${step.etaMinutes}m pic=${step.pictogram}",
-        )
+        val stableStep = continuity.accept(step)
+        Log.i(TAG, "nav parsed t=${android.os.SystemClock.elapsedRealtime()} " +
+            "generation=${lifecycle.generation} provider=$pkg distanceKnown=${stableStep.distanceMeters >= 0} " +
+            "zeroHeld=${step.distanceMeters != stableStep.distanceMeters} pic=${stableStep.pictogram}")
         Session.onHud {
             it.copy(
                 active = true,
-                instructionTitle = step.title,
-                street = step.street,
-                distanceMeters = step.distanceMeters,
-                etaMinutes = step.etaMinutes,
-                pictogramId = step.pictogram,
-                provider = step.provider,
+                instructionTitle = stableStep.title,
+                street = stableStep.street,
+                distanceMeters = stableStep.distanceMeters,
+                etaMinutes = stableStep.etaMinutes,
+                pictogramId = stableStep.pictogram,
+                provider = stableStep.provider,
             )
         }
         pendingClear?.let { handler.removeCallbacks(it) }
         pendingClear = null
-        _instruction.value = step
+        _instruction.value = stableStep
         _navigating.value = true
     }
 
@@ -201,7 +145,7 @@ class MapsNotificationListener : NotificationListenerService() {
             ?: ""
         val name = title.ifBlank { number }.ifBlank { "Incoming call" }
         val label = appLabel(pkg).takeUnless { it == "Phone" } ?: ""
-        Log.i(TAG, "call from $pkg: '$name' '$number'")
+        Log.i(TAG, "call notification from $pkg (content redacted)")
         Session.onAlert(
             ClusterAlert(
                 kind = ClusterAlert.Kind.CALL,
@@ -222,7 +166,7 @@ class MapsNotificationListener : NotificationListenerService() {
             info.count > 1 -> "$app: ${info.count} msgs"
             else -> app.ifBlank { "Message" }
         }
-        Log.i(TAG, "message from $pkg: '$display'")
+        Log.i(TAG, "message notification from $pkg (content redacted)")
         Session.onAlert(
             ClusterAlert(
                 kind = ClusterAlert.Kind.MESSAGE,
@@ -272,27 +216,58 @@ class MapsNotificationListener : NotificationListenerService() {
         // Clear a call/message alert posted from this notification.
         Session.clearAlert(key)
 
-        if (removed.packageName !in allowedPackages) return
+        scheduleClear(key)
+    }
+
+    private fun scheduleClear(key: String) {
+        val generation = lifecycle.removed(key) ?: return
         pendingClear?.let { handler.removeCallbacks(it) }
+        Log.i(TAG, "nav clear pending t=${android.os.SystemClock.elapsedRealtime()} generation=$generation")
         pendingClear = Runnable {
-            Log.i(TAG, "navigation ended (${removed.packageName})")
+            if (!lifecycle.expire(generation)) return@Runnable
+            // A callback can be missed during listener handover. Re-read only
+            // ongoing Maps guidance before deciding the route actually ended.
+            val active = runCatching { activeNotifications?.toList().orEmpty() }.getOrDefault(emptyList())
+            active.filter { it.packageName in allowedPackages && it.isOngoing }.forEach { n ->
+                val extras = n.notification.extras
+                val parsed = NavParsing.parse(
+                    extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
+                    extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
+                    extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
+                    extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(),
+                )
+                if (parsed.distanceMeters >= 0 || parsed.pictogram != null) postNav(n.key, n.packageName, parsed)
+            }
+            if (!lifecycle.expire(generation)) return@Runnable
+            Log.i(TAG, "navigation ended t=${android.os.SystemClock.elapsedRealtime()} generation=$generation")
+            continuity.reset()
             Session.onHud { it.copy(active = false) }
             _navigating.value = false
             _instruction.value = null
+            pendingClear = null
         }.also { handler.postDelayed(it, CLEAR_GRACE_MS) }
     }
+
+    private val lifecycle = NavNotificationLifecycle()
+    private val continuity = NavContinuity()
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingClear: Runnable? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.i(TAG, "listener connected; allowed: ${allowedPackages.joinToString()}")
+        Log.i(TAG, "listener connected")
+        activeNotifications?.forEach { onNotificationPosted(it) }
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         Log.w(TAG, "listener disconnected — navigation mirroring unavailable")
+    }
+
+    override fun onDestroy() {
+        pendingClear?.let { handler.removeCallbacks(it) }
+        super.onDestroy()
     }
 
     companion object {

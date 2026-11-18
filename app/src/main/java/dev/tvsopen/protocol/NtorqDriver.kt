@@ -358,7 +358,10 @@ class NtorqDriver(
         "GATT UUIDs" to Confidence.VERIFIED_FROM_APK,
         "AES-CTR handshake key" to Confidence.VERIFIED_FROM_APK,
         "start bytes 0x5A / 0x9B" to Confidence.VERIFIED_FROM_APK,
-        "inbound frame layouts" to Confidence.VERIFIED_FROM_APK,
+        "inbound frame layouts" to if (model == VehicleModel.RAIDER_125)
+            Confidence.INHERITED_UNVERIFIED else Confidence.VERIFIED_FROM_APK,
+        "Raider RPM bytes 16..17 (captured fixtures; calibration pending)" to Confidence.INHERITED_UNVERIFIED,
+        "Raider economy, temperature and trip F semantics" to Confidence.NEEDS_CAPTURE,
         "navigation control 0x5A 0x4E" to Confidence.VERIFIED_FROM_APK,
         "navigation text 0x5B 0x4F" to Confidence.VERIFIED_FROM_APK,
         "navigation second row 0x5B 0x50" to Confidence.INHERITED_UNVERIFIED,
@@ -374,8 +377,17 @@ class NtorqDriver(
     override fun decode(raw: ByteArray): DecodedFrame? {
         if (raw.size < 2) return null
         val dataId = raw[1].toInt() and 0xFF
-        return NtorqFrames.forDataId(dataId)?.decode(raw)
-            ?: GenericDriver(model).decode(raw)
+        val layout = NtorqFrames.forDataId(dataId)
+        if (model == VehicleModel.RAIDER_125) {
+            // Supplied owner handover: RPM is payload bytes 16..17, not checksum 18.
+            // Trip F 14..16 overlaps it: omit that unverified field, never guess its width.
+            if (raw.size != 20 || (raw[19].toInt() and 0xFF) != 0xFF) return null
+            if (dataId in RaiderFrames.CHECKSUM_IDS && !RaiderFrames.validChecksum(raw)) return null
+            if (dataId == 0x10) return RaiderFrames.SM1.decode(raw)
+            if (dataId == 0x18) return RaiderFrames.SM4.decode(raw)
+            if (layout != null) return layout.decode(raw)
+        }
+        return layout?.decode(raw) ?: GenericDriver(model).decode(raw)
     }
 
     /**
@@ -445,4 +457,24 @@ class NtorqDriver(
 
     override fun buildChallengeResponse(challenge: ByteArray): ByteArray? =
         Challenge.buildResponse(challenge)
+}
+
+/** Raider-specific layout; sharing GATT does not prove identical telemetry offsets. */
+object RaiderFrames {
+    val CHECKSUM_IDS: Set<Int> = setOf(0x10, 0x11, 0x18, 0x19)
+
+    /** Observed on all 943 printed standard frames in the supplied exports (overlapping sessions). */
+    fun validChecksum(raw: ByteArray): Boolean {
+        if (raw.size != 20 || raw[0] != 0x5A.toByte() || raw[19] != 0xFF.toByte()) return false
+        val sum = (0 until 18).sumOf { raw[it].toInt() and 0xFF }
+        return (raw[18].toInt() and 0xFF) == (255 - (sum % 256))
+    }
+
+    val SM4 = NtorqFrames.SM4.copy(fields = NtorqFrames.SM4.fields.filterNot {
+        it.offset == 18
+    } + FieldSpec(Field.CHECKSUM, 18))
+
+    val SM1 = NtorqFrames.SM1.copy(fields = NtorqFrames.SM1.fields.filterNot {
+        it.field == Field.TRIP_F_METER || it.field == Field.ENGINE_RPM
+    } + FieldSpec(Field.ENGINE_RPM, 16, length = 2))
 }

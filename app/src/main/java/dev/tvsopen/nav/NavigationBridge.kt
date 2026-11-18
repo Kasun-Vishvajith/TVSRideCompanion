@@ -5,11 +5,12 @@
 
 package dev.tvsopen.nav
 
-import android.util.Log
+import dev.tvsopen.log.Log
+import android.os.SystemClock
+import dev.tvsopen.protocol.VehicleModel
 import dev.tvsopen.protocol.DashState
 import dev.tvsopen.protocol.NavStep
 import dev.tvsopen.protocol.OutboundId
-import dev.tvsopen.protocol.PacketBuilder
 import dev.tvsopen.protocol.Pictograms
 import dev.tvsopen.protocol.ProtocolDriver
 import dev.tvsopen.transport.ScooterBleService
@@ -22,7 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** What the cluster is currently showing, for the UI and for diagnostics. */
+/** Phone-side transmission state. No known packet acknowledges physical rendering. */
 data class HudState(
     val active: Boolean = false,
     val instruction: NavInstruction? = null,
@@ -42,23 +43,29 @@ data class HudState(
  * active. Stopping mid-route makes the HUD close. [controlIntervalMs] is
  * therefore not a tuning knob but part of the protocol.
  *
- * ## Text cycling
- *
- * The cluster firmware renders the distance-to-turn integer itself on line 1
- * next to the arrow. Only one line of free text remains, and it is 17
- * characters. Sending alternating street name and trip metrics every few
- * seconds (per the Jupiter report §4.2) is what makes the small line useful.
+ * Row count and rendering are model-dependent. Raider primary-only mode is
+ * an experiment; physical display liveness needs time-synchronised observation.
  */
 class NavigationBridge(
-    private val ble: ScooterBleService,
     private val scope: CoroutineScope,
     private val driver: ProtocolDriver,
+    private val write: suspend (ByteArray) -> Boolean,
+    private val ready: () -> Boolean,
+    private val compatibility: () -> Boolean = { false },
+    private val now: () -> Long = { SystemClock.elapsedRealtime() },
+    private val trace: (String) -> Unit = { Log.i(TAG, it) },
+    private val stableText: () -> Boolean = { false },
 ) {
+    constructor(ble: ScooterBleService, scope: CoroutineScope, driver: ProtocolDriver,
+        compatibility: () -> Boolean = { false }, stableText: () -> Boolean = { false }) : this(
+        scope, driver, { ble.write(it) }, { ble.isReady }, compatibility, stableText = stableText,
+    )
 
     private val _hud = MutableStateFlow(HudState())
     val hud: StateFlow<HudState> = _hud.asStateFlow()
 
     private var controlJob: Job? = null
+    private var exitJob: Job? = null
     private var pingJob: Job? = null
 
     /** 0x4E or 0x49; whichever the cluster accepts. Default 0x4E. */
@@ -97,9 +104,10 @@ class NavigationBridge(
         if (pingJob?.isActive == true) return
         pingJob = scope.launch {
             while (isActive) {
+                val started = now()
                 val state = dash().copy(findMyScooter = findMy)
-                driver.buildPing(state)?.let { ble.write(it) }
-                delay(pingIntervalMs)
+                if (ready()) driver.buildPing(state)?.let { write(it) }
+                delay((pingIntervalMs - (now() - started)).coerceAtLeast(1))
             }
         }
     }
@@ -122,100 +130,89 @@ class NavigationBridge(
             return
         }
         if (controlJob?.isActive == true) return
-        var showingMetrics = false
-        // The control frame is a liveness signal the cluster expects roughly
-        // every 1.5 s. Alternating a single line runs on the slower text cadence
-        // by design, but once both rows go out together there is no reason to
-        // wait for it — so the two-row path holds the control cadence instead.
-        var lastTwoRows = false
-
+        exitJob?.cancel()
+        exitJob = null
+        val generation = ++runGeneration
         controlJob = scope.launch {
             _hud.value = _hud.value.copy(active = true, navigationDataId = navigationDataId)
+            var lastTick: Long? = null
+            var showingMetrics = false
+            var lastTextSwap = now()
             while (isActive) {
+                val cycleStarted = now()
                 val step = _hud.value.instruction
-                if (step != null) {
-                    val key = "${step.title}|${step.street}|${step.distanceMeters}"
+                val safe = driver.model == VehicleModel.RAIDER_125 && compatibility()
+                val static = driver.model == VehicleModel.RAIDER_125 && stableText()
+                if (ready() && step != null) {
+                    val key = "${step.title}|${step.street}"
                     if (key != lastInstructionKey) {
                         lastInstructionKey = key
                         scrollTick = 0
                     }
+                    val tick = if (static) 0 else scrollTick++
                     val nav = step.toNavStep()
-                    // Both cluster lines are always populated together: the
-                    // maneuver (compressed + arrow, line 1) and the ETA/distance
-                    // (line 2). Each rolls independently when it overflows its
-                    // row. The control frame advertises rows = 2 so the cluster
-                    // shows both at once instead of alternating.
-                    val street = step.displayLine(secondTextRowChars, scrollTick)
-                    val fullMetrics = step.metricsLine(firstTextRowChars, scrollTick)
-
-                    // Two lines when the driver has a second row, else alternate.
-                    //
-                    // Alternating was the only option while the cluster had one
-                    // line: street, then ETA, every 3 s, so the rider never saw
-                    // both at once and had to wait for the one they wanted.
-                    // `0x5B 0x50` is a distinct data id rather than a second use
-                    // of `0x4F`, and the control frame's byte 10 tells the cluster
-                    // how many lines are populated — so with both set they can be
-                    // shown together.
-                    //
-                    // The rider confirmed asymmetric physical rows. The second
-                    // data ID and control row count remain inherited from the
-                    // protocol transcription; their display behavior still
-                    // needs a live console capture.
-                    val metrics = fullMetrics
-                    val twoRows = driver.buildNavTextSecondary(nav.copy(streetName = street)) != null &&
-                        street.isNotBlank() && metrics.isNotBlank()
-
-                    val control = nav.copy(rows = if (twoRows) 2 else 1)
+                    val street = step.displayLine(secondTextRowChars, tick)
+                    val metrics = step.metricsLine(firstTextRowChars, tick)
+                    val secondary = if (safe) null else driver.buildNavTextSecondary(nav.copy(streetName = metrics))
+                    val control = nav.copy(rows = if (secondary != null && metrics.isNotBlank()) 2 else 1)
+                    val time = now()
+                    trace("nav tick t=$time generation=$generation gapMs=${lastTick?.let { time - it }} " +
+                        "rows=${control.rows} stable=$static active=true")
+                    lastTick = time
                     driver.buildNavControl(control)?.let { frame ->
-                        if (ble.write(frame)) {
-                            _hud.value = _hud.value.copy(
-                                framesSent = _hud.value.framesSent + 1, lastError = null,
-                            )
-                        } else {
-                            _hud.value = _hud.value.copy(lastError = "nav frame not written")
-                        }
+                        val accepted = write(frame)
+                        _hud.value = _hud.value.copy(
+                            framesSent = _hud.value.framesSent + if (accepted) 1 else 0,
+                            lastError = if (accepted) null else "nav control rejected",
+                        )
+                        if (accepted) lastControl = control
                     }
-
-                    if (twoRows) {
-                        // The maneuver goes on the primary channel, 0x4F.
-                        //
-                        // This was backwards: metrics went on 0x4F and the
-                        // maneuver on 0x50, so a cluster rendering the primary
-                        // nav text channel showed ETA forever and the turn
-                        // instruction never appeared — exactly "only ETA, no
-                        // turn-by-turn". 0x4F (`DATA_ID_NAVIGATIONDATA1`) is the
-                        // only nav text ID the current official sender defines;
-                        // 0x50 is secondary. The cluster takes the distance for
-                        // line 1 from the control frame itself, so the text line
-                        // must be the instruction, matching the manual's
-                        // "AFTER 900m / TAKE RIGHT" layout.
-                        driver.buildNavText(nav.copy(streetName = street))?.let { ble.write(it) }
-                        driver.buildNavTextSecondary(
-                            nav.copy(streetName = metrics),
-                        )?.let { ble.write(it) }
-                    } else {
-                        val line = if (showingMetrics) metrics else street
-                        driver.buildNavText(nav.copy(streetName = line))?.let { ble.write(it) }
+                    if (cycleStarted - lastTextSwap >= textSwapIntervalMs) {
                         showingMetrics = !showingMetrics
+                        lastTextSwap = cycleStarted
                     }
-                    lastTwoRows = twoRows
-                    scrollTick++
+                    val primary = if (!safe && secondary == null && showingMetrics) metrics else street
+                    driver.buildNavText(nav.copy(streetName = primary))?.let { write(it) }
+                    secondary?.let { write(it) }
+                } else if (step == null) {
+                    sendExit("route-ended")
                 }
-                delay(if (lastTwoRows || showingMetrics) controlIntervalMs else textSwapIntervalMs)
+                // Text shape and scrolling must never slow the control heartbeat.
+                delay((controlIntervalMs - (now() - cycleStarted)).coerceAtLeast(1))
             }
         }
     }
 
-    fun stopNavigation() {
+    private var lastControl: NavStep? = null
+    private var runGeneration = 0L
+
+    private suspend fun sendExit(reason: String) {
+        val old = lastControl ?: return
+        if (!ready()) { lastControl = null; return }
+        trace("nav exit t=${now()} reason=$reason active=false")
+        driver.buildNavControl(old.copy(active = false))?.let {
+            if (write(it)) lastControl = null
+        }
+    }
+
+    fun stopNavigation(clearDisplay: Boolean = true) {
         controlJob?.cancel()
         controlJob = null
+        val generation = ++runGeneration
+        exitJob?.cancel()
+        exitJob = if (clearDisplay) scope.launch {
+            if (generation == runGeneration) sendExit("mirroring-stopped")
+        } else null
+        if (!clearDisplay) lastControl = null
         scrollTick = 0
         lastInstructionKey = null
         _hud.value = HudState(active = false)
     }
 
     fun onInstruction(step: NavInstruction?) {
+        if (_hud.value.instruction != step) {
+            trace("nav instruction t=${now()} present=${step != null}")
+        }
         _hud.value = _hud.value.copy(instruction = step)
     }
 

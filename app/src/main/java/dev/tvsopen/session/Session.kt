@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * They are phone-app or cloud figures, and this app has no cloud.
  */
 data class Telemetry(
+    val raiderProfile: Boolean = false,
     val speedKmh: Int? = null,            // SM1 idx 2
     val odometerKm: Double? = null,       // SM1 idx 3..5, /10
     val fuelBars: Int? = null,            // SM1 idx 6, low nibble
@@ -48,6 +49,8 @@ data class Telemetry(
     val engineTempC: Int? = null,         // SM4 idx 8
     val batteryVoltage: Int? = null,      // SM4 idx 11
     val lastFrameAt: Long = 0L,
+    /** Per-frame timestamps; a fast speed packet must not freshen slow diagnostics. */
+    val updatedAtById: Map<Int, Long> = emptyMap(),
     /**
      * Odometer reading when this link was established.
      *
@@ -69,6 +72,27 @@ data class Telemetry(
         return if (d >= 0) d else null
     }
 
+    fun evidence(dataId: Int, verified: Boolean, now: Long = System.currentTimeMillis()): String {
+        val at = updatedAtById[dataId] ?: return "Unknown"
+        if (now - at !in 0L until STALE_AFTER_MS) return "Stale"
+        return if (verified) "Verified mapping" else "Candidate / unverified"
+    }
+
+    /** Clear only expired groups; live speed must not refresh battery or status. */
+    fun forDisplay(now: Long): Telemetry {
+        fun fresh(id: Int) = updatedAtById[id]?.let { now - it in 0L until STALE_AFTER_MS } == true
+        var shown = this
+        if (!fresh(0x10)) shown = shown.copy(speedKmh = null, odometerKm = null, fuelBars = null,
+            averageSpeedKmh = null, topSpeedKmh = null, throttlePercent = null, timeTo60Sec = null,
+            tripFMeters = null, engineRpm = null)
+        if (!fresh(0x11)) shown = shown.copy(serviceDue = null, milOn = null, milBlinkCode = null,
+            softwareVersion = null)
+        if (!fresh(0x18)) shown = shown.copy(engineTempC = null, batteryVoltage = null)
+        if (!fresh(0x19)) shown = shown.copy(avgEconomyKmpl = null, instantEconomyKmpl = null,
+            distanceToEmptyKm = null)
+        return shown
+    }
+
     /** No frames for this long means the link is stale, not merely idle. */
     fun isFresh(now: Long = System.currentTimeMillis()): Boolean =
         lastFrameAt > 0 && now - lastFrameAt < STALE_AFTER_MS
@@ -81,7 +105,7 @@ data class Telemetry(
     }
 }
 
-/** What the cluster is displaying right now. */
+/** Phone guidance state; physical cluster rendering requires observer confirmation. */
 data class HudState(
     val active: Boolean = false,
     val instructionTitle: String? = null,
@@ -115,6 +139,7 @@ data class ConnectionState1(
     val state: ConnectionState = ConnectionState.DISCONNECTED,
     val model: VehicleModel = VehicleModel.UNKNOWN,
     val address: String? = null,
+    val writeReady: Boolean = false,
 )
 
 /**
@@ -199,6 +224,8 @@ object Session {
 
     fun setRideMode(on: Boolean) { _rideMode.value = on }
 
+    fun clearParked() { _parked.value = null }
+
     fun onParked(info: ParkedInfo) { _parked.value = info }
 
     fun loadParked(context: Context) {
@@ -214,6 +241,10 @@ object Session {
         _hud.value = HudState()
     }
 
+    fun onWriteReady(ready: Boolean) {
+        _connection.value = _connection.value.copy(writeReady = ready)
+    }
+
     fun onConnection(state: ConnectionState, model: VehicleModel, address: String?) {
         val previous = _connection.value
         val wasConnected = previous.state == ConnectionState.CONNECTED
@@ -226,7 +257,7 @@ object Session {
         // old code stamped null once and "This connection" never recovered).
         // onFrame fills it from the first 0x10 that carries an odometer.
         if (isConnected && !wasConnected) {
-            _telemetry.value = _telemetry.value.copy(odometerAtConnectKm = null)
+            _telemetry.value = Telemetry(raiderProfile = model == VehicleModel.RAIDER_125)
             rideLog?.start()
         }
         if (!isConnected && wasConnected) {
@@ -255,6 +286,7 @@ object Session {
         fun scaled(name: Field, div: Double): Double? =
             frame.field(name)?.let { it / div }
 
+        val raider = _connection.value.model == VehicleModel.RAIDER_125
         val cur = _telemetry.value
         // The fuel byte's meaning is model-gated: the 125 family extracts the
         // low nibble, the 110 family passes the raw byte through (dex-verified
@@ -291,13 +323,12 @@ object Session {
                 averageSpeedKmh = frame.field(Field.AVERAGE_SPEED)?.toInt() ?: cur.averageSpeedKmh,
                 tripStatus = frame.field(Field.TRIP_STATUS)?.toInt() ?: cur.tripStatus,
                 topSpeedKmh = frame.field(Field.TOP_SPEED)?.toInt() ?: cur.topSpeedKmh,
-                throttlePercent = scaled(Field.THROTTLE_POSITION, 2.0)?.toInt()
-                    ?: cur.throttlePercent,
-                timeTo60Sec = scaled(Field.TIME_60KMPH, 10.0)
-                    ?: cur.timeTo60Sec,
-                tripFMeters = scaled(Field.TRIP_F_METER, 10.0)?.toInt() ?: cur.tripFMeters,
-                engineRpm = frame.field(Field.ENGINE_RPM)?.toInt() ?: cur.engineRpm,
+                throttlePercent = scaled(Field.THROTTLE_POSITION, 2.0)?.toInt()?.takeIf { it in 0..100 },
+                timeTo60Sec = if (raider) null else scaled(Field.TIME_60KMPH, 10.0) ?: cur.timeTo60Sec,
+                tripFMeters = if (raider) null else scaled(Field.TRIP_F_METER, 10.0)?.toInt() ?: cur.tripFMeters,
+                engineRpm = frame.field(Field.ENGINE_RPM)?.toInt()?.takeIf { it in 0..16000 },
                 lastFrameAt = now,
+                updatedAtById = cur.updatedAtById + (frame.dataId to now),
             ).also { trackRideDistance() }
 
             0x11 -> cur.copy(
@@ -308,24 +339,27 @@ object Session {
                 milBlinkCode = frame.field(Field.MIL_BLINK_CODE)?.toInt()
                     ?: cur.milBlinkCode,
                 softwareVersion = frame.field(Field.SOFTWARE_VERSION)?.toInt()
-                    ?.let { "0x%X".format(it) } ?: cur.softwareVersion,
+                    ?.takeIf { it != 0xFF }?.let { "0x%X".format(it) },
                 lastFrameAt = now,
+                updatedAtById = cur.updatedAtById + (frame.dataId to now),
             )
 
             0x19 -> cur.copy(
-                avgEconomyKmpl = frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt()
+                avgEconomyKmpl = if (raider) null else frame.field(Field.AVERAGE_FUEL_ECONOMY)?.toInt()
                     ?: cur.avgEconomyKmpl,
-                instantEconomyKmpl = frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt()
+                instantEconomyKmpl = if (raider) null else frame.field(Field.INSTANTANEOUS_FUEL_ECONOMY)?.toInt()
                     ?: cur.instantEconomyKmpl,
-                distanceToEmptyKm = frame.field(Field.DISTANCE_TO_EMPTY)?.toInt()
+                distanceToEmptyKm = if (raider) null else frame.field(Field.DISTANCE_TO_EMPTY)?.toInt()
                     ?: cur.distanceToEmptyKm,
                 lastFrameAt = now,
+                updatedAtById = cur.updatedAtById + (frame.dataId to now),
             )
 
             0x18 -> cur.copy(
-                engineTempC = frame.field(Field.ENGINE_TEMPRATURE)?.toInt() ?: cur.engineTempC,
+                engineTempC = if (raider) null else frame.field(Field.ENGINE_TEMPRATURE)?.toInt() ?: cur.engineTempC,
                 batteryVoltage = frame.field(Field.BATTERY_VOLTAGE)?.toInt() ?: cur.batteryVoltage,
                 lastFrameAt = now,
+                updatedAtById = cur.updatedAtById + (frame.dataId to now),
             )
 
             else -> cur.copy(lastFrameAt = now)

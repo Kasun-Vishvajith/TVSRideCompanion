@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +73,10 @@ fun OverviewScreen(
     telemetry: Telemetry,
     modifier: Modifier = Modifier,
 ) {
+    val now by androidx.compose.runtime.produceState(initialValue = System.currentTimeMillis()) {
+        while (true) { kotlinx.coroutines.delay(1000); value = System.currentTimeMillis() }
+    }
+    val shown = telemetry.forDisplay(now)
     Column(
         modifier
             .fillMaxSize()
@@ -81,7 +86,8 @@ fun OverviewScreen(
         Spacer(Modifier.height(18.dp))
         Text("Vehicle Overview", style = MaterialTheme.typography.headlineLarge)
         Text(
-            "Live from the instrument cluster",
+            if (shown.raiderProfile) "Raider mappings under review; — means unknown or stale"
+            else "Live from the instrument cluster",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -94,7 +100,7 @@ fun OverviewScreen(
             BigStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                telemetry.topSpeedKmh?.toString() ?: "—",
+                shown.topSpeedKmh?.toString() ?: "—",
                 "km/h",
                 "Top Speed",
                 LocalTilePalette.current.largeLeft,
@@ -102,7 +108,7 @@ fun OverviewScreen(
             BigStat(
                 Modifier.weight(1f),
                 Icons.Filled.Bolt,
-                telemetry.engineRpm?.toString() ?: "—",
+                shown.engineRpm?.toString() ?: "—",
                 "rpm",
                 // Not "Top RPM": this is the current engine speed from 0x10
                 // bytes 17-18. Only the speed tile is a top-speed field, and
@@ -117,7 +123,7 @@ fun OverviewScreen(
         BigStat(
             Modifier.fillMaxWidth(),
             Icons.Filled.Timer,
-            telemetry.timeTo60Sec?.let { String.format("%.1f", it) } ?: "—",
+            shown.timeTo60Sec?.let { String.format("%.1f", it) } ?: "—",
             "sec",
             "Best 0–60",
             LocalTilePalette.current.neutral,
@@ -125,7 +131,7 @@ fun OverviewScreen(
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Fuel")
-        FuelGauge(telemetry.fuelBars)
+        FuelGauge(shown.fuelBars)
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Distance Travelled")
@@ -134,18 +140,24 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Route,
-                telemetry.odometerKm?.let { String.format("%.1f", it) } ?: "—",
+                shown.odometerKm?.let { String.format("%.1f", it) } ?: "—",
                 "Total distance",
             )
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Route,
-                telemetry.connectedDistanceKm()
+                shown.connectedDistanceKm()
                     ?.let { String.format("%.1f", it) } ?: "—",
                 "This connection",
             )
         }
 
+        if (shown.raiderProfile) {
+            Text("RPM: ${telemetry.evidence(0x10, false, now)} · " +
+                "Battery /10 candidate: ${telemetry.evidence(0x18, false, now)}", style = MaterialTheme.typography.bodySmall)
+            Text("Economy, range, engine temperature and 0–60: Unverified. Firmware FF: Unknown.",
+                style = MaterialTheme.typography.bodySmall)
+        }
         Spacer(Modifier.height(20.dp))
         SectionLabel("Cluster telemetry")
 
@@ -153,14 +165,14 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.BatteryChargingFull,
-                telemetry.batteryVoltage?.let { String.format("%.1f", it / 10.0) } ?: "—",
-                "Battery (V)",
+                shown.batteryVoltage?.let { String.format("%.1f", it / 10.0) } ?: "—",
+                if (shown.raiderProfile) "Battery candidate (V)" else "Battery (V)",
             )
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Thermostat,
-                telemetry.engineTempC?.toString() ?: "—",
-                "Coolant (°C)",
+                shown.engineTempC?.toString() ?: "—",
+                "Engine temperature (°C)",
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -168,13 +180,13 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.LocalGasStation,
-                telemetry.distanceToEmptyKm?.toString() ?: "—",
+                shown.distanceToEmptyKm?.toString() ?: "—",
                 "Range (km)",
             )
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Build,
-                when (telemetry.serviceDue) {
+                when (shown.serviceDue) {
                     true -> "Due"
                     false -> "OK"
                     null -> "—"
@@ -187,17 +199,17 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Warning,
-                when (telemetry.milOn) {
-                    true -> telemetry.milBlinkCode?.takeIf { it > 0 }?.let { "On ($it)" } ?: "On"
+                when (shown.milOn) {
+                    true -> shown.milBlinkCode?.takeIf { it > 0 }?.let { "On ($it)" } ?: "On"
                     false -> "Off"
                     null -> "—"
                 },
-                "Check engine",
+                "MIL lamp (not ECU scan)",
             )
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                telemetry.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
+                shown.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Avg economy",
             )
         }
@@ -206,13 +218,13 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                telemetry.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
+                shown.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Instant economy",
             )
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Build,
-                telemetry.softwareVersion ?: "—",
+                shown.softwareVersion ?: "—",
                 "Firmware",
             )
         }

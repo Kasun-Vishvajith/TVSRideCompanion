@@ -33,6 +33,7 @@ import dev.tvsopen.session.ClusterAlert
 import dev.tvsopen.session.Session
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -208,7 +209,7 @@ class RideService : android.app.Service() {
         val model = prefs.lastModelId
             ?.let { runCatching { VehicleModel.valueOf(it) }.getOrNull() }
             ?: VehicleModel.NTORQ
-        Log.i(TAG, "sticky restart; resuming $address")
+        Log.i(TAG, "sticky restart; resuming remembered cluster")
         connect(address, model)
     }
 
@@ -220,7 +221,7 @@ class RideService : android.app.Service() {
      * silence, because `transport.connect` itself only returns a Boolean and a
      * SecurityException from `connectGatt` would otherwise kill the service.
      */
-    fun connect(address: String, model: VehicleModel): Boolean {
+    fun connect(address: String, model: VehicleModel, retry: Boolean = false): Boolean {
         // Stop the previous link first: same scope, so a second connect without
         // this leaves both keepalive loops running and the cluster gets double
         // pings.
@@ -228,10 +229,10 @@ class RideService : android.app.Service() {
         linkJob = null
         reconnectJob?.cancel()
         reconnectJob = null
-        reconnectAttempt = 0
+        if (!retry) reconnectAttempt = 0
         tearingDown = false
         bridge?.stopKeepalive()
-        bridge?.stopNavigation()
+        bridge?.stopNavigation(clearDisplay = false)
 
         // By now the permissions the service was refused at startup have been
         // granted, so the foreground notification can go up properly.
@@ -244,11 +245,13 @@ class RideService : android.app.Service() {
         // Race was added, because a miss here means the generic profile and a
         // dashboard full of `—` rather than an error. One source of truth.
         val driver = if (model.sharesNtorqProtocol()) {
-            NtorqDriver()
+            NtorqDriver(model)
         } else {
             DriverRegistry.forModel(model)
         }
-        val b = NavigationBridge(transport, scope, driver)
+        val b = NavigationBridge(transport, scope, driver,
+            compatibility = { RidePrefs.load(this).raiderPrimaryRowOnly },
+            stableText = { RidePrefs.load(this).raiderStaticText })
         bridge = b
         this.driver = driver
         mediaKeys = mediaKeys ?: MediaKeys(applicationContext)
@@ -259,7 +262,7 @@ class RideService : android.app.Service() {
         RidePrefs.load(this).updateLastConnection(address, model.name)
 
         Session.onConnection(ConnectionState.CONNECTING, model, address)
-        Log.i(TAG, "connecting to ${model.displayName} at $address")
+        Log.i(TAG, "connecting to ${model.displayName} (address redacted)")
         notify("Connecting to ${model.displayName}…")
 
         val started = try {
@@ -326,8 +329,10 @@ class RideService : android.app.Service() {
                     val response = driver.buildChallengeResponse(frame.bytes)
                     if (response != null) {
                         Log.i(TAG, "answering cluster challenge")
+                        transport.ready.first { it }
                         transport.write(response)
                     } else {
+                        if (model == VehicleModel.RAIDER_125) dev.tvsopen.log.RaiderDiagnostics.frame(frame.bytes)
                         val decoded = driver.decode(frame.bytes)
                         if (decoded != null) {
                             Session.onFrame(decoded)
@@ -401,6 +406,12 @@ class RideService : android.app.Service() {
                 }
             }
             launch {
+                transport.ready.collect { ready ->
+                    Session.onWriteReady(ready)
+                    if (ready) sendRiderNameIfConnected()
+                }
+            }
+            launch {
                 b.hud.collect { h ->
                     Session.onHud { it.copy(framesSent = h.framesSent, lastError = h.lastError) }
                 }
@@ -452,7 +463,7 @@ class RideService : android.app.Service() {
                 val name = alert.title.takeIf { it.isNotBlank() && it != number }
                 val frames = driver.buildCallerFrames(number, null, name)
                 if (frames.isNotEmpty()) {
-                    Log.i(TAG, "cluster call alert: '$name' '$number' (${frames.size} frames)")
+                    Log.i(TAG, "cluster call alert (content redacted, ${frames.size} frames)")
                     frames.forEach { transport.write(it) }
                 } else {
                     // Generic fallback: a plain text row with the caller.
@@ -462,7 +473,7 @@ class RideService : android.app.Service() {
             }
             ClusterAlert.Kind.MESSAGE -> {
                 val text = alert.title.take(17)
-                Log.i(TAG, "cluster message alert: '$text'")
+                Log.i(TAG, "cluster message alert (content redacted)")
                 val frame = driver.buildSms(text) ?: PacketBuilder.textRow(OutboundId.SMS, text)
                 transport.write(frame)
             }
@@ -499,7 +510,7 @@ class RideService : android.app.Service() {
         val info = ParkedInfo(System.currentTimeMillis(), label, null)
         RidePrefs.load(this).saveParked(info.atMillis, info.label)
         Session.onParked(info)
-        Log.i(TAG, "parked spot saved: $label")
+        Log.i(TAG, "parked spot saved locally (coordinates redacted)")
     }
 
     @SuppressLint("MissingPermission")
@@ -515,7 +526,9 @@ class RideService : android.app.Service() {
                 val enabled = provider == LocationManager.PASSIVE_PROVIDER || lm.isProviderEnabled(provider)
                 if (enabled) lm.getLastKnownLocation(provider) else null
             }.getOrNull() ?: continue
-            if (best == null || loc.time > best!!.time) best = loc
+            val age = (android.os.SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1_000_000
+            if (age !in 0L..60_000L || !loc.hasAccuracy() || loc.accuracy > 100) continue
+            if (best == null || loc.elapsedRealtimeNanos > best!!.elapsedRealtimeNanos) best = loc
         }
         return best
     }
@@ -569,7 +582,8 @@ class RideService : android.app.Service() {
         reconnectJob = scope.launch {
             delay(wait)
             if (ble?.state?.value == ConnectionState.CONNECTED) return@launch
-            connect(address, model)
+            reconnectJob = null
+            if (!connect(address, model, retry = true)) scheduleReconnect(address, model)
         }
     }
 
@@ -581,7 +595,7 @@ class RideService : android.app.Service() {
         linkJob?.cancel()
         linkJob = null
         bridge?.stopKeepalive()
-        bridge?.stopNavigation()
+        bridge?.stopNavigation(clearDisplay = false)
         releaseWakeLock()
         driver = null
         // The state collector is gone with linkJob, so publish the disconnect

@@ -111,6 +111,7 @@ dependencies {
     // the double-division bug that made the odometer read 10x low was invisible
     // to the compiler and to every smoke test on a disconnected phone.
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
 
     // Embedded OpenStreetMap view (docs/MAPS.md). Pinned, not ranged: tile
     // fetching behaviour must not shift under a future release unreviewed.

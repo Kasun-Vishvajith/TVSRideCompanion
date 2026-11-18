@@ -61,3 +61,18 @@ research/vendor/scoot-sim/.venv/
 # the reference material they illustrate.
 docs/reference/images/Screenshot_*
 docs/FORUM_POSTS.md
+
+# Owner-supplied Raider investigation package: preserve locally, never stage captures/research.
+/FLICKER_OBSERVATION_TEMPLATE.csv
+/FULL_DIAGNOSTIC_REVIEW.md
+/MANIFEST.json
+/MASTER_CODEX_TASK.md
+/RAIDER_PROTOCOL_EVIDENCE.md
+/README_START_HERE.md
+/TEST_PLAN_AND_ACCEPTANCE.md
+/USER_OBSERVATION_CORRECTION.md
+/WINDOWS11_INSTRUCTIONS.md
+/log_stats.json
+/navigation_timeline_redacted.csv
+/raider_frame_fixtures.json
+/verify_fixtures.py

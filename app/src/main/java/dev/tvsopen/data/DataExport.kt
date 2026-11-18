@@ -61,6 +61,8 @@ object DataExport {
             JSONObject()
                 .put("riderName", prefs.riderName ?: JSONObject.NULL)
                 .put("navigationMirroring", prefs.navigationMirroring)
+                .put("raiderPrimaryRowOnly", prefs.raiderPrimaryRowOnly)
+                .put("raiderStaticText", prefs.raiderStaticText)
                 .put("mirrorPhoneCalls", prefs.mirrorPhoneCalls)
                 .put("mirrorMessages", prefs.mirrorMessages)
                 .put("rideMode", prefs.rideMode)

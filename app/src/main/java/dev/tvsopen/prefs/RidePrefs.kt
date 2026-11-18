@@ -73,6 +73,16 @@ class RidePrefs private constructor(private val ctx: Context) {
         get() = sp.getBoolean(KEY_NAVIGATION_MIRRORING, true)
         set(value) { sp.edit().putBoolean(KEY_NAVIGATION_MIRRORING, value).apply() }
 
+    /** Reversible Raider-only primary-row, static-text experiment. Default is the original mode. */
+    var raiderPrimaryRowOnly: Boolean
+        get() = sp.getBoolean("raider_primary_row_only", false)
+        set(value) { sp.edit().putBoolean("raider_primary_row_only", value).apply() }
+
+    /** Separate from row count so the parked A/B test changes one variable at a time. */
+    var raiderStaticText: Boolean
+        get() = sp.getBoolean("raider_static_text", false)
+        set(value) { sp.edit().putBoolean("raider_static_text", value).apply() }
+
     /** Mirror incoming phone calls to the cluster (caller name/number). */
     var mirrorPhoneCalls: Boolean
         get() = sp.getBoolean(KEY_MIRROR_PHONE_CALLS, true)
