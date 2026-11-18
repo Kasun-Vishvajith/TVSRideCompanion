@@ -21,6 +21,7 @@ public final class RideService extends Service {
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic tx;
     private final ArrayDeque<byte[]> queue = new ArrayDeque<>();
+    private byte[] lastPrimary, lastSecondary;
     private boolean running, ready, writing, noResponse;
     private int attempts;
     private String address;
@@ -70,7 +71,7 @@ public final class RideService extends Service {
     }
     private void closeLink() {
         Store.IO.removeCallbacks(writeTimeout);
-        ready = writing = false; tx = null; queue.clear();
+        ready = writing = false; tx = null; queue.clear(); lastPrimary = lastSecondary = null;
         BluetoothGatt old = gatt; gatt = null;
         if (old != null) { try { old.disconnect(); } catch (SecurityException ignored) {} old.close(); }
     }
@@ -111,7 +112,7 @@ public final class RideService extends Service {
         }
         @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int status) {
             Store.IO.post(() -> {
-                if (g != gatt || !CCCD.equals(d.getUuid())) return;
+                if (g != gatt || ready || !CCCD.equals(d.getUuid())) return;
                 if (status != 0) { fail("Notification setup failed"); return; }
                 ready = true; attempts = 0; state("Connected · Raider 125");
                 send(Protocol.text(0x52, getSharedPreferences("raider", 0).getString("name", "Rider")));
@@ -160,6 +161,8 @@ public final class RideService extends Service {
             if (Build.VERSION.SDK_INT >= 33) accepted = gatt.writeCharacteristic(tx, b, type) == BluetoothGatt.GATT_SUCCESS;
             else { tx.setWriteType(type); tx.setValue(b); accepted = gatt.writeCharacteristic(tx); }
             if (!accepted) { fail("Write rejected"); return; }
+            if (Protocol.u(b, 1) == 0x4f) lastPrimary = b;
+            if (Protocol.u(b, 1) == 0x50) lastSecondary = b;
             Store.event(String.format(Locale.ROOT, "TX %02X%02X submitted", b[0], b[1]));
             if (noResponse) later(() -> { writing = false; pump(); }, 120);
             else Store.IO.postDelayed(writeTimeout, 4000);
@@ -191,12 +194,19 @@ public final class RideService extends Service {
     }
     private void clearNavigation() {
         navKey = null; Store.preview = "—";
+        queue.removeIf(RideService::isNavigation);
+        lastPrimary = lastSecondary = null;
         if (ready) send(Protocol.navigation(false)); Store.publish(true);
     }
     private void sendNavigation() {
         if (!getSharedPreferences("raider", 0).getBoolean("navigation", true)) { clearNavigation(); return; }
-        send(Protocol.navigation(true)); send(Protocol.text(0x4f, navLine1)); send(Protocol.text(0x50, navLine2));
+        queue.removeIf(RideService::isNavigation);
+        send(Navigation.control(navLine1));
+        byte[] first = Protocol.text(0x4f, navLine1), second = Protocol.text(0x50, navLine2);
+        if (!Arrays.equals(first, lastPrimary)) send(first);
+        if (!Arrays.equals(second, lastSecondary)) send(second);
     }
+    private static boolean isNavigation(byte[] b) { int id = Protocol.u(b, 1); return id == 0x4e || id == 0x4f || id == 0x50; }
     private void pulse() {
         if (!running || !ready) return;
         BatteryManager battery = getSystemService(BatteryManager.class);

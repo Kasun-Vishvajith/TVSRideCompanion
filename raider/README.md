@@ -43,8 +43,10 @@ Notification access is an Android special-access toggle, opened from Settings.
 Optional notification-posting denial does not block Bluetooth. The listener
 accepts navigation-category notifications only from Google Maps and Waze.
 This initial version mirrors title/text into the two candidate text packets,
-with a straight placeholder pictogram and no inferred turn distances. It does
-not yet implement icon parsing, localized maneuvers, caller ID, SMS or phone
+with basic English title-based left/right/U-turn and distance parsing. Unknown
+instructions use the inherited straight placeholder; titles and street names
+without an explicit instruction never select left/right. It does not yet
+implement icon parsing, localized maneuvers, caller ID, SMS or phone
 control. Removal/repost has a 2.5-second continuity window and guidance expires
 after 60 seconds without updates. Notification text is visible only in memory;
 logs store packet metadata, never navigation text or device addresses.

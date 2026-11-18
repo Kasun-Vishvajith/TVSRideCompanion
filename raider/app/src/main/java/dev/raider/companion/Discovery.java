@@ -30,7 +30,11 @@ final class Discovery {
         byte[] old = previous.put(id, b.clone());
         if (until == 0 || now > until) return;
         seenAfterArm.add(id);
-        if (old == null) return;
+        if (old == null) {
+            changes.put("new:" + id, String.format(Locale.ROOT, "5A%02X appeared: no earlier baseline for this frame group", id));
+            transitions++;
+            return;
+        }
         for (int i = 2; i < 18; i++) {
             if (old[i] == b[i] || !Protocol.discoveryByte(id, i)) continue;
             String key = id + ":" + i;
