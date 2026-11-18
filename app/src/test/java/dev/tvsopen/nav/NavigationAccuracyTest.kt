@@ -29,7 +29,7 @@ class NavigationAccuracyTest {
     }
 
     @Test fun `street names and distance alone never resolve a maneuver`() {
-        for (road in listOf("Example Road", "Leftbank Road", "Left Road", "Right Avenue")) {
+        for (road in listOf("Example Road", "Leftbank Road", "Left Road", "Right Avenue", "Sharp Left Road", "U-turn Road")) {
             val p = NavParsing.parse("550 m", road, "", "")
             assertEquals(ManeuverKind.UNKNOWN, p.direction.kind)
             assertNull(p.pictogram)

@@ -12,12 +12,12 @@ data class ManeuverReading(val kind: ManeuverKind, val source: ManeuverSource)
 
 object ManeuverText {
     private val rules = listOf(
-        "\\b(?:u[- ]?turn|turn around)\\b" to ManeuverKind.U_TURN,
+        "\\b(?:make(?: a)?|take(?: a)?|perform(?: a)?) u[- ]?turn\\b|\\bturn around\\b|^u[- ]?turn$" to ManeuverKind.U_TURN,
         "\\broundabout\\b" to ManeuverKind.ROUNDABOUT,
-        "\\b(?:turn |bear |keep )?(?:sharp|sharply) left\\b" to ManeuverKind.SHARP_LEFT,
-        "\\b(?:turn |bear |keep )?(?:sharp|sharply) right\\b" to ManeuverKind.SHARP_RIGHT,
-        "\\b(?:turn |bear |keep )?(?:slight|slightly) left\\b|\\b(?:bear|keep) left\\b" to ManeuverKind.SLIGHT_LEFT,
-        "\\b(?:turn |bear |keep )?(?:slight|slightly) right\\b|\\b(?:bear|keep) right\\b" to ManeuverKind.SLIGHT_RIGHT,
+        "\\b(?:turn|bear|keep|take)(?: the)? (?:sharp|sharply) left\\b|^(?:sharp|sharply) left$" to ManeuverKind.SHARP_LEFT,
+        "\\b(?:turn|bear|keep|take)(?: the)? (?:sharp|sharply) right\\b|^(?:sharp|sharply) right$" to ManeuverKind.SHARP_RIGHT,
+        "\\b(?:turn|bear|keep|take)(?: the)? (?:slight|slightly) left\\b|^(?:slight|slightly) left$|\\b(?:bear|keep) left\\b" to ManeuverKind.SLIGHT_LEFT,
+        "\\b(?:turn|bear|keep|take)(?: the)? (?:slight|slightly) right\\b|^(?:slight|slightly) right$|\\b(?:bear|keep) right\\b" to ManeuverKind.SLIGHT_RIGHT,
         "\\b(?:turn|take(?: the)?(?: next)?) left\\b" to ManeuverKind.LEFT,
         "\\b(?:turn|take(?: the)?(?: next)?) right\\b" to ManeuverKind.RIGHT,
         "\\b(?:continue|go|head|keep|proceed)(?: straight| ahead)\\b|^straight(?: ahead)?$" to ManeuverKind.STRAIGHT,

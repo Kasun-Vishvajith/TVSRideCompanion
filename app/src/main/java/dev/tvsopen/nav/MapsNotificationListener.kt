@@ -131,11 +131,12 @@ class MapsNotificationListener : NotificationListenerService() {
             direction = parsed.direction,
         )
         val stableStep = continuity.accept(step)
+        val details = if (dev.tvsopen.log.RaiderDiagnostics.enabled)
+            " maneuver=${stableStep.direction.kind} source=${stableStep.direction.source} " +
+                "totalKnown=${stableStep.remainingTripMeters != null} totalHeld=${stableStep.totalHeld}" else ""
         Log.i(TAG, "nav parsed t=${android.os.SystemClock.elapsedRealtime()} " +
             "generation=${lifecycle.generation} provider=$pkg distanceKnown=${stableStep.distanceMeters >= 0} " +
-            "zeroHeld=${step.distanceMeters != stableStep.distanceMeters} pic=${stableStep.pictogram} " +
-            "maneuver=${stableStep.direction.kind} source=${stableStep.direction.source} " +
-            "totalKnown=${stableStep.remainingTripMeters != null} totalHeld=${stableStep.totalHeld}")
+            "zeroHeld=${step.distanceMeters != stableStep.distanceMeters} pic=${stableStep.pictogram}$details")
         Session.onHud {
             it.copy(
                 active = true,

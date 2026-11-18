@@ -157,11 +157,12 @@ class NavigationBridge(
                     val secondary = if (safe) null else driver.buildNavTextSecondary(nav.copy(streetName = metrics))
                     val control = nav.copy(rows = if (secondary != null && metrics.isNotBlank()) 2 else 1)
                     val time = now()
+                    val details = if (dev.tvsopen.log.RaiderDiagnostics.enabled)
+                        " maneuver=${step.direction.kind} source=${step.direction.source} " +
+                            "pictogram=${control.pictogram} arrowPlaceholder=${step.pictogram == null} " +
+                            "totalKnown=${step.remainingTripMeters != null} totalHeld=${step.totalHeld}" else ""
                     trace("nav tick t=$time generation=$generation gapMs=${lastTick?.let { time - it }} " +
-                        "rows=${control.rows} stable=$static active=true " +
-                        "maneuver=${step.direction.kind} source=${step.direction.source} " +
-                        "pictogram=${control.pictogram} arrowPlaceholder=${step.pictogram == null} " +
-                        "totalKnown=${step.remainingTripMeters != null} totalHeld=${step.totalHeld}")
+                        "rows=${control.rows} stable=$static active=true$details")
                     lastTick = time
                     driver.buildNavControl(control)?.let { frame ->
                         val accepted = write(frame)
