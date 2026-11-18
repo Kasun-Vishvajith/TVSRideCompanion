@@ -72,12 +72,15 @@ import dev.tvsopen.ui.theme.NumberStyle
 @Composable
 fun OverviewScreen(
     telemetry: Telemetry,
+    vehicleModel: dev.tvsopen.protocol.VehicleModel = dev.tvsopen.protocol.VehicleModel.UNKNOWN,
     modifier: Modifier = Modifier,
 ) {
     val now by androidx.compose.runtime.produceState(initialValue = dev.tvsopen.session.TelemetryClock.nowMillis()) {
         while (true) { kotlinx.coroutines.delay(1000); value = dev.tvsopen.session.TelemetryClock.nowMillis() }
     }
     val shown = telemetry.forDisplay(now)
+    val isRaider = vehicleModel == dev.tvsopen.protocol.VehicleModel.RAIDER_125 ||
+        (vehicleModel == dev.tvsopen.protocol.VehicleModel.UNKNOWN && telemetry.raiderProfile)
     val context = androidx.compose.ui.platform.LocalContext.current
     val rawEconomy = dev.tvsopen.prefs.RidePrefs.load(context).showRaiderEconomyRaw
     Column(
@@ -89,12 +92,17 @@ fun OverviewScreen(
         Spacer(Modifier.height(18.dp))
         Text("Vehicle Overview", style = MaterialTheme.typography.headlineLarge)
         Text(
-            if (shown.raiderProfile) "Raider mappings under review; — means unknown or stale"
+            if (isRaider) "Raider 125 · 5 fuel segments · Trip A / B · Gear / neutral"
             else "Live from the instrument cluster",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        if (isRaider) {
+            Text("— means unknown or stale; connect to receive live readings.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(20.dp))
 
         // The three headline figures, as the official app shows them flanking
@@ -123,7 +131,7 @@ fun OverviewScreen(
         }
 
         Spacer(Modifier.height(12.dp))
-        if (shown.raiderProfile) {
+        if (isRaider) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 DistanceStat(Modifier.weight(1f), Icons.Filled.Settings,
                     shown.gear?.let { if (it == 0) "N" else it.toString() } ?: "—", "Gear / neutral")
@@ -150,7 +158,7 @@ fun OverviewScreen(
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Fuel")
-        FuelGauge(shown.fuelBars, shown.fuelBarMax)
+        FuelGauge(shown.fuelBars, if (isRaider) 5 else shown.fuelBarMax)
 
         Spacer(Modifier.height(20.dp))
         SectionLabel("Distance Travelled")
@@ -171,7 +179,7 @@ fun OverviewScreen(
             )
         }
 
-        if (shown.raiderProfile) {
+        if (isRaider) {
             Text("RPM: ${telemetry.evidence(0x10, false, now)} · " +
                 "Battery /10 candidate: ${telemetry.evidence(0x18, false, now)}", style = MaterialTheme.typography.bodySmall)
             Text("Range and instant economy: unavailable. Temperature calibration is unverified.",
@@ -185,7 +193,7 @@ fun OverviewScreen(
                 Modifier.weight(1f),
                 Icons.Filled.BatteryChargingFull,
                 shown.batteryVoltage?.let { String.format("%.1f", it / 10.0) } ?: "—",
-                if (shown.raiderProfile) "Battery candidate (V)" else "Battery (V)",
+                if (isRaider) "Battery candidate (V)" else "Battery (V)",
             )
             DistanceStat(
                 Modifier.weight(1f),
@@ -210,7 +218,7 @@ fun OverviewScreen(
                     false -> "OK"
                     null -> "—"
                 },
-                if (shown.raiderProfile) "Service flag · unverified" else "Service",
+                if (isRaider) "Service flag · unverified" else "Service",
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -228,12 +236,12 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                if (shown.raiderProfile) {
+                if (isRaider) {
                     if (rawEconomy) telemetry.averageEconomyCandidate?.let { "$it (candidate)" } ?: "Unavailable"
                     else "Unverified"
                 }
                 else shown.avgEconomyKmpl?.let { "$it kmpl" } ?: "—",
-                if (shown.raiderProfile) "Average economy candidate · units unverified" else "Avg economy",
+                if (isRaider) "Average economy candidate · units unverified" else "Avg economy",
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -241,7 +249,7 @@ fun OverviewScreen(
             DistanceStat(
                 Modifier.weight(1f),
                 Icons.Filled.Speed,
-                if (shown.raiderProfile) "Unavailable"
+                if (isRaider) "Unavailable"
                 else shown.instantEconomyKmpl?.let { "$it kmpl" } ?: "—",
                 "Instant economy",
             )

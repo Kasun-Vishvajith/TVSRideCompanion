@@ -365,7 +365,12 @@ class MainActivity : AppCompatActivity() {
                         // Log. These two destinations were swapped, so tapping
                         // Overview rendered the log and tapping Log rendered
                         // the dashboard.
-                        OverviewScreen(telemetry = telemetry)
+                        OverviewScreen(
+                            telemetry = telemetry,
+                            vehicleModel = VehicleModel.dashboardModel(
+                                connection.model, RidePrefs.load(this@MainActivity).lastModelId,
+                            ),
+                        )
                     } else {
                         LogScreen()
                     }

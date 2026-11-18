@@ -65,6 +65,12 @@ enum class VehicleModel(
         this == NTORQ || this == NTORQ_125_RACE || this == RAIDER_125 || this == RAIDER_180
 
     companion object {
+        /** Layout uses the selected vehicle even before its first telemetry frame. */
+        fun dashboardModel(current: VehicleModel, savedModel: String?): VehicleModel {
+            if (current != UNKNOWN) return current
+            return entries.firstOrNull { it.name == savedModel || it.id == savedModel } ?: UNKNOWN
+        }
+
         /**
          * Best-effort match from a advertised local name / model string.
          * Returns [UNKNOWN] rather than throwing — the driver registry then

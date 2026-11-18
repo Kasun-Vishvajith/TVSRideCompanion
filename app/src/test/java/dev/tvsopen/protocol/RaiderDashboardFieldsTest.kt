@@ -24,6 +24,24 @@ class RaiderDashboardFieldsTest {
         Session.reset()
     }
 
+    @Test fun `saved Raider dashboard is selected before connecting without inventing readings`() {
+        assertEquals(VehicleModel.RAIDER_125,
+            VehicleModel.dashboardModel(VehicleModel.UNKNOWN, "RAIDER_125"))
+        assertEquals(VehicleModel.RAIDER_125,
+            VehicleModel.dashboardModel(VehicleModel.UNKNOWN, "raider125"))
+        assertEquals(VehicleModel.JUPITER_125,
+            VehicleModel.dashboardModel(VehicleModel.JUPITER_125, "RAIDER_125"))
+        assertEquals(VehicleModel.UNKNOWN,
+            VehicleModel.dashboardModel(VehicleModel.UNKNOWN, "invalid"))
+        assertEquals(VehicleModel.UNKNOWN,
+            VehicleModel.dashboardModel(VehicleModel.UNKNOWN, null))
+        val empty = Telemetry()
+        assertNull(empty.tripAKm)
+        assertNull(empty.tripBKm)
+        assertNull(empty.gear)
+        assertNull(empty.fuelBars)
+    }
+
     @Test fun `trip counters decode once in km and never populate economy`() {
         connect()
         val raw = packet(0x19) { it[5] = 0x04; it[6] = 0xD2.toByte(); it[8] = 0x16; it[9] = 0x2E }
