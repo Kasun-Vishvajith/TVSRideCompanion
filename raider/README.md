@@ -62,9 +62,12 @@ Do not run Gradle locally. The independent Gradle root is `raider/`, invoked
 using the repository wrapper by `.github/workflows/raider.yml`. Every relevant
 push/PR runs JVM tests, release lint, debug/optimized builds and permission
 assertions. Download **raider-optimized** for ordinary use, **raider-debug** for
-`run-as` diagnostics, and **raider-checks** for reports. The workflow reuses the
-existing project signing secrets when available; without them, ephemeral CI
-keys cannot reliably upgrade a previous installation. Both variants share the
+`run-as` diagnostics, and **raider-checks** for reports. The workflow uses dedicated `RAIDER_KEYSTORE_B64`, `RAIDER_KEYSTORE_PASS`,
+`RAIDER_KEY_ALIAS` and `RAIDER_KEY_PASS` secrets. The owner keeps the private
+key and password backup outside the repository in `~/tvs-signing/`. Without
+these secrets (for example on forks), ephemeral CI keys cannot reliably upgrade
+a previous installation. Keep the signing backup safe: replacing the key
+requires uninstalling the app and loses its private data. Both variants share the
 same package, so install one variant at a time.
 
 The optimized APK enables R8 and resource shrinking. No startup time, battery

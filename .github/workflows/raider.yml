@@ -28,12 +28,12 @@ jobs:
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-34' 'build-tools;34.0.0'
-      - name: Project signing key
+      - name: Raider signing key
         env:
-          KEY_B64: ${{ secrets.TVS_KEYSTORE_B64 }}
-          STORE_PASS: ${{ secrets.TVS_KEYSTORE_PASS }}
-          KEY_ALIAS: ${{ secrets.TVS_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.TVS_KEY_PASS }}
+          KEY_B64: ${{ secrets.RAIDER_KEYSTORE_B64 }}
+          STORE_PASS: ${{ secrets.RAIDER_KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.RAIDER_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.RAIDER_KEY_PASS }}
         shell: bash
         run: |
           set -euo pipefail
@@ -41,9 +41,9 @@ jobs:
             echo '::warning::Signing secret absent; APK uses an ephemeral debug key.'
             exit 0
           fi
-          printf '%s' "$KEY_B64" | base64 -d > tvs-release.jks
+          printf '%s' "$KEY_B64" | base64 -d > raider-release.jks
           {
-            printf 'storeFile=tvs-release.jks\n'
+            printf 'storeFile=raider-release.jks\n'
             printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$STORE_PASS" "$KEY_ALIAS" "$KEY_PASS"
           } > key.properties
       - name: Test, lint and build both APKs
@@ -64,6 +64,19 @@ jobs:
             if grep -Eq 'android.permission.(READ_CONTACTS|READ_CALL_LOG|CALL_PHONE|ACCESS_BACKGROUND_LOCATION)' /tmp/raider-permissions.txt; then
               echo '::error::Unexpected sensitive permission'; exit 1
             fi
+          done
+      - name: Verify permanent Raider signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f key.properties ]; then
+            echo 'No private key available on this run; skipping owner signer assertion.'
+            exit 0
+          fi
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          for APK in raider/app/build/outputs/apk/{debug/app-debug,release/app-release}.apk; do
+            "$APKSIGNER" verify --print-certs "$APK" > /tmp/raider-certificate.txt
+            grep -qi 'Signer #1 certificate SHA-256 digest: d7c06d3c58594b17b1fbe7d81ac1fdbe75398a104818323b2755026d38edb5d6' /tmp/raider-certificate.txt
           done
       - uses: actions/upload-artifact@v4
         with:
