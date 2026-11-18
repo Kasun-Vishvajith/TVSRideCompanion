@@ -115,7 +115,7 @@ public final class MainActivity extends Activity {
             Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
             startActivity(intent);
         });
-        Switch toggle = new Switch(this); toggle.setText("Mirror navigation"); toggle.setTextColor(INK); toggle.setChecked(mirror);
+        Switch toggle = new Switch(this); toggle.setText(R.string.mirror_navigation); toggle.setTextColor(INK); toggle.setChecked(mirror);
         toggle.setOnCheckedChangeListener((b, checked) -> { mirror = checked; Store.IO.post(() -> getSharedPreferences("raider", 0).edit().putBoolean("navigation", checked).apply()); RideService.refreshPolicy(); }); n.addView(toggle);
         LinearLayout logs = card(content); logs.addView(text("Logs", 16, ACCENT));
         button(logs, "View logs", () -> Store.IO.post(() -> {
@@ -236,15 +236,16 @@ public final class MainActivity extends Activity {
     private void refresh() {
         if (status != null) status.setText(Store.state);
         if (speed != null) speed.setText(Store.speed);
-        if (rpm != null) rpm.setText("RPM  " + Store.rpm);
-        if (gear != null) gear.setText("Gear  " + Store.gear);
-        if (odometer != null) odometer.setText("Odometer  " + Store.odo + " km");
+        if (rpm != null) rpm.setText(getString(R.string.rpm_value, Store.rpm));
+        if (gear != null) gear.setText(getString(R.string.gear_value, Store.gear));
+        if (odometer != null) odometer.setText(getString(R.string.odometer_value, Store.odo));
         if (nav != null) nav.setText(Store.preview);
         if (result != null) result.setText(Store.test);
         if (access != null) {
             String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-            String own = new ComponentName(this, NotificationBridge.class).flattenToString();
-            access.setText(enabled != null && Arrays.asList(enabled.split(":")).contains(own) ? "Access enabled" : "Access off");
+            ComponentName own = new ComponentName(this, NotificationBridge.class);
+            boolean granted = enabled != null && Arrays.stream(enabled.split(":")).anyMatch(s -> own.equals(ComponentName.unflattenFromString(s)));
+            access.setText(granted ? "Access enabled" : "Access off");
         }
     }
     private String readLogs() {

@@ -14,6 +14,11 @@ final class Discovery {
     synchronized void reset() {
         previous.clear(); received.clear(); changes.clear(); seenAfterArm.clear(); baselineIds.clear(); until = 0; transitions = 0;
     }
+    synchronized void disconnected(long now) {
+        // Preserve the experiment for saving, but never compare a new link against an old baseline.
+        if (until != 0) until = Math.min(until, Math.max(1, now - 1));
+        previous.clear(); received.clear();
+    }
     synchronized boolean arm(long now) {
         previous.keySet().removeIf(id -> now - received.getOrDefault(id, -100_000L) > 10_000);
         if (previous.isEmpty()) return false;

@@ -45,4 +45,16 @@ public class DiscoveryTest {
         assertTrue(d.report(400).contains("5A18 byte[8]"));
         assertFalse(d.report(400).contains("temperature"));
     }
+    @Test public void disconnectPreservesReportButDiscardsTheOldBaseline() {
+        Discovery d = new Discovery(); byte[] b = ProtocolTest.frame(0x10);
+        d.frame(b, 100); d.arm(200); b[12] = 1; d.frame(ProtocolTest.checked(b), 300);
+        d.disconnected(400);
+        assertFalse(d.active(401)); assertTrue(d.report(401).contains("byte[12]"));
+        assertFalse(d.arm(500));
+    }
+    @Test public void newFrameGroupDuringExperimentIsReported() {
+        Discovery d = new Discovery(); d.frame(ProtocolTest.frame(0x10), 100); d.arm(200);
+        d.frame(ProtocolTest.frame(0x12), 300);
+        assertTrue(d.report(400).contains("5A12 appeared"));
+    }
 }

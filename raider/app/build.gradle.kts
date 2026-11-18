@@ -29,6 +29,11 @@ android {
         }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    lint { abortOnError = true }
+    lint {
+        abortOnError = true
+        warningsAsErrors = true
+        // Deliberately retain SDK 34 compatibility for this privately installed first version.
+        disable += "OldTargetApi"
+    }
 }
 dependencies { testImplementation("junit:junit:4.13.2") }

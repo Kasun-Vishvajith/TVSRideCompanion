@@ -11,6 +11,7 @@ import java.util.*;
 
 /** Explicit ride lifetime; all transport state is confined to Store.IO. */
 @SuppressLint("MissingPermission")
+@SuppressWarnings("deprecation")
 public final class RideService extends Service {
     static final String STOP = "dev.raider.STOP", NAME = "dev.raider.NAME";
     private static final UUID SERVICE = UUID.fromString("5456534d-5647-5341-5342-454e544f5251");
@@ -105,7 +106,7 @@ public final class RideService extends Service {
                 BluetoothGattDescriptor descriptor = rx.getDescriptor(CCCD);
                 if (descriptor == null || (rx.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0 || !g.setCharacteristicNotification(rx, true)) { fail("Notifications unavailable"); return; }
                 boolean accepted;
-                if (Build.VERSION.SDK_INT >= 33) accepted = g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS;
+                if (Build.VERSION.SDK_INT >= 33) accepted = g.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS;
                 else { descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE); accepted = g.writeDescriptor(descriptor); }
                 if (!accepted) fail("Notification setup rejected");
             });
@@ -158,7 +159,7 @@ public final class RideService extends Service {
         int type = noResponse ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
         try {
             boolean accepted;
-            if (Build.VERSION.SDK_INT >= 33) accepted = gatt.writeCharacteristic(tx, b, type) == BluetoothGatt.GATT_SUCCESS;
+            if (Build.VERSION.SDK_INT >= 33) accepted = gatt.writeCharacteristic(tx, b, type) == BluetoothStatusCodes.SUCCESS;
             else { tx.setWriteType(type); tx.setValue(b); accepted = gatt.writeCharacteristic(tx); }
             if (!accepted) { fail("Write rejected"); return; }
             if (Protocol.u(b, 1) == 0x4f) lastPrimary = b;

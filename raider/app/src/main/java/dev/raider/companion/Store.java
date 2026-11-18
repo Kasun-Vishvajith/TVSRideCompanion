@@ -42,7 +42,7 @@ final class Store {
     }
     static String logs() { synchronized (lines) { return String.join("\n", lines); } }
     static void clearTelemetry() {
-        frames.clear(); times.clear(); speed = rpm = gear = odo = "—"; discovery.reset();
+        frames.clear(); times.clear(); speed = rpm = gear = odo = "—"; discovery.disconnected(SystemClock.elapsedRealtime());
         test = discovery.report(SystemClock.elapsedRealtime());
     }
     static void frame(byte[] b) {
