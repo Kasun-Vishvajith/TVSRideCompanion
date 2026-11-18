@@ -291,6 +291,11 @@ object Log {
             // Payloads seen before the clear must not suppress the first dumps
             // after it, or clearing the log would still open mid-stream.
             frameCounts.clear()
+            // The pacing gates must go too: their lastBytes/lastEmitAt belong
+            // to the pre-clear stream. Keeping them suppresses the first frames
+            // after Clear and prefixes them with a (+N more) from before it.
+            frameGates.clear()
+            lastPublishAt = 0L
             _records.value = emptyList()
             _frameCount.value = 0L
         }
@@ -391,7 +396,11 @@ object Log {
      * and in the file.
      */
     fun frame(direction: String, bytes: ByteArray, atMillis: Long = System.currentTimeMillis()) {
-        _frameCount.value = _frameCount.value + 1
+        // Read-modify-write on a StateFlow: without the lock, concurrent BLE
+        // callback threads lose increments and the displayed total undercounts.
+        synchronized(lock) {
+            _frameCount.value = _frameCount.value + 1
+        }
         if (!captureFrames) return
         // contentHashCode compares content, not identity, so this is a genuine
         // payload test; a collision would only merge two already-identical lines.

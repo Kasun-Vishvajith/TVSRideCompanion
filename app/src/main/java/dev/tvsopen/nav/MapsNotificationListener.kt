@@ -68,10 +68,17 @@ data class NavInstruction(
      * it still overflows.
      */
     fun metricsLine(maxChars: Int = RowChars.NTORQ_LINE_1, tick: Int = 0): String {
-        val d = if (distanceMeters >= 1000)
-            "${distanceMeters / 1000}Km ${distanceMeters % 1000}m"
-        else "${distanceMeters}m"
-        val raw = if (etaMinutes > 0) "ETA ${etaMinutes}m $d" else d
+        val d = when {
+            // -1 is NavParsing's "unknown distance" sentinel. Never ship it as
+            // "-1m", and never turn it into an invented "0m" on the cluster.
+            distanceMeters < 0 -> ""
+            distanceMeters >= 1000 -> "${distanceMeters / 1000}Km ${distanceMeters % 1000}m"
+            else -> "${distanceMeters}m"
+        }
+        val raw = listOf(
+            if (etaMinutes > 0) "ETA ${etaMinutes}m" else "",
+            d,
+        ).filter { it.isNotEmpty() }.joinToString(" ")
         return RollingText.window(NavShortCodes.compress(raw), maxChars, tick)
     }
 }
@@ -107,6 +114,10 @@ class MapsNotificationListener : NotificationListenerService() {
     @Volatile
     var allowedPackages: Set<String> = DEFAULT_MAPS_PACKAGES
 
+    /** Key of the notification that posted the current step, for teardown. */
+    @Volatile
+    private var activeNavKey: String? = null
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val n = sbn ?: return
         val pkg = n.packageName
@@ -137,7 +148,7 @@ class MapsNotificationListener : NotificationListenerService() {
                 distance >= 0)
 
         if (looksLikeNav) {
-            postNav(pkg, parsed)
+            postNav(pkg, parsed, n.key)
             return
         }
 
@@ -167,7 +178,8 @@ class MapsNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun postNav(pkg: String, parsed: ParsedNav) {
+    private fun postNav(pkg: String, parsed: ParsedNav, key: String) {
+        activeNavKey = key
         val step = NavInstruction(
             title = parsed.maneuver,
             street = parsed.street,
@@ -279,7 +291,13 @@ class MapsNotificationListener : NotificationListenerService() {
         // Clear a call/message alert posted from this notification.
         Session.clearAlert(key)
 
-        if (removed.packageName !in allowedPackages) return
+        // Clear only when the notification that posted the active step goes
+        // away. Maps posts several notifications during a ride, and a removal
+        // of any of them from an allowlisted app used to schedule a full clear
+        // mid-route. Tracking the key also covers apps accepted structurally
+        // rather than by package — those could never clear at all.
+        if (activeNavKey == null || removed.key != activeNavKey) return
+        activeNavKey = null
         pendingClear?.let { handler.removeCallbacks(it) }
         pendingClear = Runnable {
             Log.i(TAG, "navigation ended (${removed.packageName})")

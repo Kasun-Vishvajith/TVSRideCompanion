@@ -532,7 +532,10 @@ class MainActivity : AppCompatActivity() {
             requestBlePermissions()
             return
         }
-        scanner.start()
+        // The switch on ScanScreen reads RidePrefs, so the scan started here
+        // must use the same persisted value — otherwise the UI says ON after
+        // process death while the scan is still unfiltered.
+        scanner.start(RidePrefs.load(this).onlySmartXonnect)
         scanning.value = true
     }
 

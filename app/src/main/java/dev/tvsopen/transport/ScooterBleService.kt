@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import dev.tvsopen.log.Log
 import dev.tvsopen.protocol.Gatt
 import dev.tvsopen.protocol.GattConfig
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -169,12 +171,18 @@ class ScooterBleService(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     private fun closeGatt(g: BluetoothGatt) {
+        if (gatt !== g) {
+            // A late callback from a previous client must not clear the new
+            // link's write characteristic or cancel its discovery fallback —
+            // that leaves a link that says CONNECTED but can never work.
+            runCatching { g.close() }
+                .onFailure { Log.w(TAG, "gatt close: ${it.message}") }
+            return
+        }
         writeChar = null
         mainHandler.removeCallbacksAndMessages(null)
-        if (gatt === g) {
-            gatt = null
-            discoveryStarted = false
-        }
+        gatt = null
+        discoveryStarted = false
         runCatching { g.close() }
             .onFailure { Log.w(TAG, "gatt close: ${it.message}") }
     }
@@ -185,6 +193,19 @@ class ScooterBleService(private val context: Context) {
      * and an exception in a caller coroutine is not.
      */
     suspend fun write(bytes: ByteArray): Boolean = writeLock.withLock {
+        // CONNECTED is published at GATT connect, but writeChar is only set
+        // after MTU + service discovery. Frames sent from the CONNECTED branch
+        // — the rider-name greeting, the first keepalive, the first nav step —
+        // were dropped as "no write characteristic" and never retried. Wait
+        // briefly for setup; other writers queue on this lock anyway.
+        if (_state.value == ConnectionState.CONNECTED && writeChar == null) {
+            val deadline = SystemClock.elapsedRealtime() + WRITE_READY_WAIT_MS
+            while (writeChar == null && gatt != null &&
+                _state.value == ConnectionState.CONNECTED &&
+                SystemClock.elapsedRealtime() < deadline) {
+                delay(50)
+            }
+        }
         val g = gatt
         val ch = writeChar
         if (g == null || ch == null || _state.value != ConnectionState.CONNECTED) {
@@ -359,6 +380,10 @@ class ScooterBleService(private val context: Context) {
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
+            if (g !== gatt) {
+                Log.d(TAG, "ignoring descriptor write from a closed client")
+                return
+            }
             Log.d(TAG, "descriptor write status=$status")
             // One CCCD write at a time: firing the next while one is pending
             // makes the stack refuse it, so the queue advances here.
@@ -407,7 +432,12 @@ class ScooterBleService(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun discoverServices(g: BluetoothGatt): Boolean {
-        val ok = g.discoverServices()
+        val ok = try {
+            g.discoverServices()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "discoverServices refused: ${e.message}")
+            return false
+        }
         if (!ok) Log.w(TAG, "discoverServices refused")
         return ok
     }
@@ -513,6 +543,9 @@ class ScooterBleService(private val context: Context) {
          * enough that a stack which never reports it does not stall the link.
          */
         private const val DISCOVERY_FALLBACK_MS = 2500L
+
+        /** Max wait for the write characteristic after a GATT connect. */
+        private const val WRITE_READY_WAIT_MS = 2_000L
 
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 

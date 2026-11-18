@@ -81,7 +81,9 @@ class RideLog(context: Context) {
             )
         }
         sp.edit().putString(KEY, arr.toString()).apply()
-        _rides.value = list
+        // Keep the in-memory view in step with what was persisted; otherwise
+        // the UI can show more than MAX_RIDES until the next process start.
+        _rides.value = list.take(MAX_RIDES)
     }
 
     /** Opens a ride. A ride already in progress is left alone. */

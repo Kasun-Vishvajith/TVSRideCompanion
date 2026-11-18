@@ -65,7 +65,9 @@ fun LogScreen(modifier: Modifier = Modifier) {
         records.filter { it.level >= minLevel }
     }
 
-    LaunchedEffect(visible.size, autoScroll) {
+    // Key on the tail record, not visible.size: snapshot() caps the list at
+    // 500, so once full the size never changes and Follow silently stops.
+    LaunchedEffect(visible.lastOrNull(), autoScroll) {
         if (autoScroll && visible.isNotEmpty()) {
             listState.animateScrollToItem(visible.lastIndex)
         }

@@ -117,14 +117,18 @@ class ScooterScanner(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun record(result: ScanResult) {
-        val addr = result.device?.address ?: return
+        // Device properties need BLUETOOTH_CONNECT on API 31+, a different
+        // permission from BLUETOOTH_SCAN which let the scan start. A revocation
+        // between the two must not crash the scan callback thread.
+        val device = result.device ?: return
+        val addr = runCatching { device.address }.getOrNull() ?: return
         val services: List<ParcelUuid> = runCatching {
             result.scanRecord?.serviceUuids ?: emptyList()
         }.getOrDefault(emptyList())
         val isSx = services.any { it.uuid?.toString()?.equals(Gatt.SERVICE, true) == true }
 
         val name = result.scanRecord?.deviceName
-            ?: result.device?.name
+            ?: runCatching { device.name }.getOrNull()
         val byName = name != null && CLUSTER_NAME_RE.containsMatchIn(name)
         val d = Discovered(
             address = addr,
@@ -144,9 +148,14 @@ class ScooterScanner(private val context: Context) {
             guessedModel = VehicleModel.detect(name),
         )
         val prev = found[addr]
-        // Keep the strongest reading: RSSI jitters and the last packet is often
-        // a missed one, so a naive overwrite makes the list flicker.
-        if (prev == null || d.rssi > prev.rssi) found[addr] = d
+        // Keep the strongest reading for display stability, but ALWAYS refresh
+        // lastSeenMillis. Otherwise a device advertising at a steady or falling
+        // RSSI is dropped as stale even though it is still right there.
+        if (prev == null || d.rssi > prev.rssi) {
+            found[addr] = d
+        } else {
+            found[addr] = prev.copy(lastSeenMillis = d.lastSeenMillis)
+        }
         publish()
     }
 

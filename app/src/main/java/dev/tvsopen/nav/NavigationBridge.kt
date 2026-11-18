@@ -134,6 +134,13 @@ class NavigationBridge(
             while (isActive) {
                 val step = _hud.value.instruction
                 if (step != null) {
+                    if (step.distanceMeters < 0) {
+                        // "Starting navigation…" carries no distance. The
+                        // control frame has no "unknown" value, so sending one
+                        // would invent 0m on the cluster. Wait for a real step.
+                        delay(controlIntervalMs)
+                        continue
+                    }
                     val key = "${step.title}|${step.street}|${step.distanceMeters}"
                     if (key != lastInstructionKey) {
                         lastInstructionKey = key
@@ -145,8 +152,11 @@ class NavigationBridge(
                     // (line 2). Each rolls independently when it overflows its
                     // row. The control frame advertises rows = 2 so the cluster
                     // shows both at once instead of alternating.
-                    val street = step.displayLine(secondTextRowChars, scrollTick)
-                    val fullMetrics = step.metricsLine(firstTextRowChars, scrollTick)
+                    // The maneuver goes on line 1 (10 chars); the street /
+                    // ETA row on line 2 (12). These were passed backwards, so
+                    // the turn was built for a 12-cell row and clipped.
+                    val maneuver = step.displayLine(firstTextRowChars, scrollTick)
+                    val fullMetrics = step.metricsLine(secondTextRowChars, scrollTick)
 
                     // Two lines when the driver has a second row, else alternate.
                     //
@@ -163,8 +173,8 @@ class NavigationBridge(
                     // protocol transcription; their display behavior still
                     // needs a live console capture.
                     val metrics = fullMetrics
-                    val twoRows = driver.buildNavTextSecondary(nav.copy(streetName = street)) != null &&
-                        street.isNotBlank() && metrics.isNotBlank()
+                    val twoRows = driver.buildNavTextSecondary(nav.copy(streetName = maneuver)) != null &&
+                        maneuver.isNotBlank() && metrics.isNotBlank()
 
                     val control = nav.copy(rows = if (twoRows) 2 else 1)
                     driver.buildNavControl(control)?.let { frame ->
@@ -190,12 +200,12 @@ class NavigationBridge(
                         // line 1 from the control frame itself, so the text line
                         // must be the instruction, matching the manual's
                         // "AFTER 900m / TAKE RIGHT" layout.
-                        driver.buildNavText(nav.copy(streetName = street))?.let { ble.write(it) }
+                        driver.buildNavText(nav.copy(streetName = maneuver))?.let { ble.write(it) }
                         driver.buildNavTextSecondary(
                             nav.copy(streetName = metrics),
                         )?.let { ble.write(it) }
                     } else {
-                        val line = if (showingMetrics) metrics else street
+                        val line = if (showingMetrics) metrics else maneuver
                         driver.buildNavText(nav.copy(streetName = line))?.let { ble.write(it) }
                         showingMetrics = !showingMetrics
                     }

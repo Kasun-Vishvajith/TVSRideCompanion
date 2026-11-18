@@ -569,7 +569,16 @@ class RideService : android.app.Service() {
         reconnectJob = scope.launch {
             delay(wait)
             if (ble?.state?.value == ConnectionState.CONNECTED) return@launch
+            val attemptBefore = reconnectAttempt
             connect(address, model)
+            // connect() clears the counter for a deliberate new link. This was
+            // a retry, so restore the escalated value or every retry fires
+            // after 5 s and the give-up limit is never reached. Re-arm when a
+            // reconnect could not even start — otherwise retrying stops dead.
+            if (ble?.state?.value != ConnectionState.CONNECTED) {
+                reconnectAttempt = attemptBefore
+                if (!tearingDown) scheduleReconnect(address, model)
+            }
         }
     }
 
