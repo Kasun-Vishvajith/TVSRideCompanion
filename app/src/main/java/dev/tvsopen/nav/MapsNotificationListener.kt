@@ -47,8 +47,6 @@ class MapsNotificationListener : NotificationListenerService() {
     private fun allowedPackages(): Set<String> =
         DEFAULT_MAPS_PACKAGES + RidePrefs.load(applicationContext).extraMapsPackages
 
-    /** Key of the notification that posted the current step, for teardown. */
-    @Volatile
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val n = sbn ?: return
