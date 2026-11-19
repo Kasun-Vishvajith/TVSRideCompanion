@@ -357,7 +357,7 @@ class MapsNotificationListener : NotificationListenerService() {
             if (!rebindGate.shouldRequest(hasAccess(context), _readerStatus.value.connected,
                     android.os.SystemClock.elapsedRealtime())) return
             runCatching {
-                requestRebind(ComponentName(context, MapsNotificationListener::class.java))
+                NotificationListenerService.requestRebind(ComponentName(context, MapsNotificationListener::class.java))
                 Log.i(TAG, "notification reader reconnect requested")
             }.onFailure {
                 Log.w(TAG, "notification reader reconnect failed: ${it.javaClass.simpleName}")
