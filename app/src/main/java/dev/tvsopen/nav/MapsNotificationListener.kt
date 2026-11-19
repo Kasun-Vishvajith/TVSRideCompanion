@@ -1,6 +1,7 @@
 package dev.tvsopen.nav
 
 import android.app.Notification
+import android.content.ComponentName
 import android.os.Build
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
@@ -110,9 +111,9 @@ class MapsNotificationListener : NotificationListenerService() {
     private val _navigating = MutableStateFlow(false)
     val navigating: StateFlow<Boolean> = _navigating.asStateFlow()
 
-    /** Packages to trust in addition to structural detection. */
-    @Volatile
-    var allowedPackages: Set<String> = DEFAULT_MAPS_PACKAGES
+    /** Built-in maps apps plus the packages the rider added in More. */
+    private fun allowedPackages(): Set<String> =
+        DEFAULT_MAPS_PACKAGES + RidePrefs.load(applicationContext).extraMapsPackages
 
     /** Key of the notification that posted the current step, for teardown. */
     @Volatile
@@ -142,7 +143,7 @@ class MapsNotificationListener : NotificationListenerService() {
         // parses "13 m" as 13 metres and was mirrored as a turn).
         val hasNavExtras = extras.containsKey("android.app.extra.MAPS_MODE") ||
             extras.containsKey("navigation.mode")
-        val looksLikeNav = pkg in allowedPackages || hasNavExtras ||
+        val looksLikeNav = pkg in allowedPackages() || hasNavExtras ||
             (ongoing && category == Notification.CATEGORY_NAVIGATION &&
                 title.isNotEmpty() && (text.isNotEmpty() || bigText.isNotEmpty()) &&
                 distance >= 0)
@@ -312,12 +313,17 @@ class MapsNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.i(TAG, "listener connected; allowed: ${allowedPackages.joinToString()}")
+        Log.i(TAG, "listener connected; allowed: ${allowedPackages().joinToString()}")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         Log.w(TAG, "listener disconnected — navigation mirroring unavailable")
+        // An OEM can kill the listener without unbinding us. Rebind so mirroring
+        // recovers without a reinstall or a toggle cycle.
+        runCatching {
+            requestRebind(ComponentName(this, MapsNotificationListener::class.java))
+        }.onFailure { Log.w(TAG, "rebind request failed: ${it.message}") }
     }
 
     companion object {

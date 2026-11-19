@@ -86,11 +86,20 @@ class RideLog(context: Context) {
         _rides.value = list.take(MAX_RIDES)
     }
 
-    /** Opens a ride. A ride already in progress is left alone. */
+    /** Opens a ride, finalising one left open by a killed process first. */
     fun start(now: Long = System.currentTimeMillis()) {
-        val current = _rides.value
-        if (current.firstOrNull()?.inProgress == true) return
-        persist(listOf(Ride(now, null, 0.0)) + current)
+        var current = _rides.value
+        val open = current.firstOrNull()
+        if (open?.inProgress == true) {
+            // A process killed mid-ride leaves an in-progress row whose distance
+            // was never persisted. If it is recent, keep it; if it is stale,
+            // close it so the next link gets a fresh open ride instead of
+            // overwriting it with its own, unrelated odometer delta.
+            if (now - open.startedAt < STALE_OPEN_RIDE_MS) return
+            current = listOf(open.copy(endedAt = now)) + current.drop(1)
+            persist(current)
+        }
+        persist(listOf(Ride(now, null, 0.0)) + _rides.value)
     }
 
     /**
@@ -124,5 +133,8 @@ class RideLog(context: Context) {
         private const val KEY_TOTAL = "ride_total_count"
         private const val KEY_DIST = "ride_total_distance"
         private const val MAX_RIDES = 100
+
+        /** An open ride older than this belongs to a process that died. */
+        private const val STALE_OPEN_RIDE_MS = 6 * 60 * 60 * 1000L
     }
 }

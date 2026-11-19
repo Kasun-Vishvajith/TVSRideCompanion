@@ -78,6 +78,20 @@ class RidePrefs private constructor(private val ctx: Context) {
         get() = sp.getBoolean(KEY_MIRROR_PHONE_CALLS, true)
         set(value) { sp.edit().putBoolean(KEY_MIRROR_PHONE_CALLS, value).apply() }
 
+    /** Extra maps packages the rider added in More, beyond the built-in list. */
+    var extraMapsPackages: Set<String>
+        get() = sp.getStringSet(KEY_EXTRA_MAPS_PACKAGES, emptySet()) ?: emptySet()
+        set(value) { sp.edit().putStringSet(KEY_EXTRA_MAPS_PACKAGES, value).apply() }
+
+    /** Keep the screen awake while the app is open — for testing only. */
+    var keepScreenOn by mutableStateOf(sp.getBoolean(KEY_KEEP_SCREEN_ON, false))
+        private set
+
+    fun updateKeepScreenOn(on: Boolean) {
+        keepScreenOn = on
+        sp.edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
+    }
+
     /** Mirror message/app notifications (sender and count, never the message text). */
     var mirrorMessages: Boolean
         get() = sp.getBoolean(KEY_MIRROR_MESSAGES, false)
@@ -120,6 +134,8 @@ class RidePrefs private constructor(private val ctx: Context) {
         private const val KEY_NAVIGATION_MIRRORING = "navigation_mirroring"
         private const val KEY_MIRROR_PHONE_CALLS = "mirror_phone_calls"
         private const val KEY_MIRROR_MESSAGES = "mirror_messages"
+        private const val KEY_EXTRA_MAPS_PACKAGES = "extra_maps_packages"
+        private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_PARKED_AT = "parked_at"
         private const val KEY_PARKED_LABEL = "parked_label"
         private const val KEY_SELECTED_MODEL_PREFIX = "selected_model_"

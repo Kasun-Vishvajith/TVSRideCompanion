@@ -114,4 +114,26 @@ class NavShortCodesTest {
             assertEquals(width, RollingText.window(text, width, t).length)
         }
     }
-}
+
+    @Test
+    fun `compass bearings each get their own direction`() {
+        // All eight used to render as ^, so head south and head west were
+        // indistinguishable from straight on. The cluster-safe alphabet is
+        // letters, space and +-<>^, so these stay within it.
+        val arrows = (50..57).map { NavShortCodes.asciiArrow(it) }
+        assertEquals(8, arrows.distinct().size)
+        assertEquals("^", arrows[0])   // north
+        assertEquals(">>", arrows[2])  // east
+        assertEquals("vv", arrows[4])  // south
+        assertEquals("<<", arrows[6])  // west
+        val kept = "+-<>^ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 "
+        for (id in 50..57) {
+            assertTrue(NavShortCodes.asciiArrow(id).all { it in kept })
+        }
+    }
+
+    @Test
+    fun `sharp right is not drawn as straight ahead in the phone UI`() {
+        assertEquals("\u21C9", NavShortCodes.uiArrow(4))
+        assertTrue(NavShortCodes.uiArrow(4) != NavShortCodes.uiArrow(7))
+    }}

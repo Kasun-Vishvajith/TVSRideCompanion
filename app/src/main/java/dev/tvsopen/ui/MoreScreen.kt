@@ -73,6 +73,8 @@ fun MoreScreen(
     totalRides: Int,
     totalRideDistanceKm: Double,
     onRiderNameChange: (String?) -> Unit,
+    keepScreenOn: Boolean,
+    onKeepScreenOnChange: (Boolean) -> Unit,
     notificationAccessGranted: Boolean,
     onOpenNotificationAccess: () -> Unit,
     onScan: () -> Unit,
@@ -201,6 +203,16 @@ fun MoreScreen(
                 }
             }
         }
+
+        item { MapsAllowlistCard() }
+
+        item {
+            Text("TESTING", style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        item { KeepScreenOnCard(enabled = keepScreenOn, onChange = onKeepScreenOnChange) }
 
         item {
             Text("ALERTS", style = MaterialTheme.typography.labelMedium,
@@ -377,7 +389,7 @@ fun MoreScreen(
                     Icon(Icons.Filled.Science, null)
                     Text("TVSRide", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "No account. No TVS server. No INTERNET permission.",
+                        "No account. No TVS server. INTERNET is used for map tiles only.",
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                     )
@@ -386,6 +398,75 @@ fun MoreScreen(
         }
 
         item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+/** Extra maps packages the rider trusts to post turn-by-turn notifications. */
+@Composable
+private fun MapsAllowlistCard() {
+    val ctx = LocalContext.current
+    val prefs = RidePrefs.load(ctx)
+    var input by remember { mutableStateOf("") }
+    var extras by remember { mutableStateOf(prefs.extraMapsPackages) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Extra maps apps", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Turn-by-turn from these package names is mirrored too. " +
+                    "Only add apps you trust to post navigation notifications.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            extras.forEach { pkg ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(pkg, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = {
+                        extras = extras - pkg
+                        prefs.extraMapsPackages = extras
+                    }) { Text("Remove") }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    label = { Text("Package name") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.size(6.dp))
+                Button(onClick = {
+                    val pkg = input.trim()
+                    if (pkg.isNotEmpty()) {
+                        extras = extras + pkg
+                        prefs.extraMapsPackages = extras
+                        input = ""
+                    }
+                }) { Text("Add") }
+            }
+        }
+    }
+}
+
+/** Testing aid: keeps the screen awake while the app is open. */
+@Composable
+private fun KeepScreenOnCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Keep screen on", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "For testing only. The screen stays awake while this app is " +
+                            "open, which uses more battery.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AppSwitch(checked = enabled, onCheckedChange = onChange)
+            }
+        }
     }
 }
 

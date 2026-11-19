@@ -172,4 +172,11 @@ class NavParsingTest {
         assertEquals(0, p.etaMinutes)
         assertTrue(p.maneuver.isNotEmpty())
     }
-}
+
+    @Test
+    fun `a thousands separator is not a decimal comma`() {
+        // "1,000 m" is 1000 m, not 1 m. A European decimal comma still works.
+        assertEquals(1000, NavParsing.extractDistance("1,000 m"))
+        assertEquals(2300, NavParsing.extractDistance("2,3 km"))
+        assertEquals(1500, NavParsing.extractDistance("1.5 km"))
+    }}

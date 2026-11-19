@@ -157,7 +157,16 @@ object NavShortCodes {
         6, 41 -> "U"
         7, 10, 21, 35 -> "^"
         9, 34 -> "X"
-        50, 51, 52, 53, 54, 55, 56, 57 -> "^"
+        // Compass bearings are directions, not "straight on". All eight used
+        // to render as ^, so head south and head west looked like head north.
+        50 -> "^"     // north
+        51 -> "^>"    // northeast
+        52 -> ">>"    // east
+        53 -> "v>"    // southeast
+        54 -> "vv"    // south
+        55 -> "v<"    // southwest
+        56 -> "<<"    // west
+        57 -> "^<"    // northwest
         65, 66, 67, 68, 69, 70, 71 -> "O"
         else -> ""
     }
@@ -167,7 +176,7 @@ object NavShortCodes {
         1 -> "\u293C"
         0, 11, 13, 15, 17, 19, 22, 23 -> "\u2190"
         2 -> "\u21B0"
-        4 -> "\u2B06"
+        4 -> "\u21C9"   // sharp right (was an up arrow)
         3, 12, 14, 16, 18, 20, 24, 25 -> "\u2192"
         5 -> "\u21B1"
         6, 41 -> "\u21A9"

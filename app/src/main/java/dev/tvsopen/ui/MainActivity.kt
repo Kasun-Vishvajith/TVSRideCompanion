@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -202,6 +203,17 @@ class MainActivity : AppCompatActivity() {
             mutableStateOf(RidePrefs.load(this@MainActivity).navigationMirroring)
         }
 
+        // A mutableStateOf-backed preference: reading it here makes the window
+        // flag follow the More-screen toggle without a restart.
+        val keepScreenOn = RidePrefs.load(this@MainActivity).keepScreenOn
+        LaunchedEffect(keepScreenOn) {
+            if (keepScreenOn) {
+                this@MainActivity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                this@MainActivity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
         val telemetry by Session.telemetry.collectAsStateWithLifecycle()
         val hud by Session.hud.collectAsStateWithLifecycle()
         val connection by Session.connection.collectAsStateWithLifecycle()
@@ -354,6 +366,10 @@ class MainActivity : AppCompatActivity() {
                                 if (hasBlePermission()) {
                                     send(RideService.ACTION_UPDATE_RIDER_NAME)
                                 }
+                            },
+                            keepScreenOn = keepScreenOn,
+                            onKeepScreenOnChange = {
+                                RidePrefs.load(this@MainActivity).updateKeepScreenOn(it)
                             },
                             notificationAccessGranted = hasNotificationAccess,
                             onOpenNotificationAccess = onOpenNotificationAccess,
