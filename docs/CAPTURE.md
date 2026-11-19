@@ -480,3 +480,21 @@ Byte 17 of `0x4A` per the Jupiter report. Verify: capture with the byte 0, then
 Capture on your own parked scooter, ideally with the ignition on but the
 wheel off the ground or the bike on its centre stand, and never while riding.
 Keep a Bluetooth sniffer out of the way of the throttle.
+
+## Raider Eco / Power identification
+
+Automatic Eco/Power decoding is pending paired Raider observations. Jupiter's
+0x10 byte 8 mapping is not evidence for Raider and must not be reused blindly.
+
+In More, enable Local telemetry and command trace in the Raider test panel.
+While safely parked, mark Observed ECO or Observed POWER only when that mode is
+visible on the bike. Each mark retains 10 seconds before and 20 seconds after;
+wait at least 20 seconds before exporting the marked capture. Repeat with both
+modes and, if possible, repeat the transition to distinguish mode from counters.
+Do not operate the phone while riding. No mode-setting or calibration frames are
+sent. Observation markers are manual labels, not decoded telemetry.
+
+Use Export marked capture. Files stay in app-private files/diagnostics; retrieve
+with adb run-as. Keep captures private: raw standard telemetry includes odometer
+and trip values. Validate the candidate field with regression fixtures before
+adding an automatic dashboard indicator.

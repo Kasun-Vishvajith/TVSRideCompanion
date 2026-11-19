@@ -812,6 +812,17 @@ private fun RaiderNavigationCard() {
                 })
                 Text("Local telemetry and command trace")
             }
+            HorizontalDivider()
+            Text("Bike Eco / Power capture", style = MaterialTheme.typography.titleSmall)
+            Text("Automatic mode detection is not verified for Raider. These buttons record what you see on the bike; they do not change its mode. Only mark while safely parked, with tracing on.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = diagnostic, onClick = {
+                    dev.tvsopen.log.RaiderDiagnostics.markBikeMode(dev.tvsopen.log.RaiderDiagnostics.ObservedBikeMode.ECO)
+                }) { Text("Observed ECO") }
+                OutlinedButton(enabled = diagnostic, onClick = {
+                    dev.tvsopen.log.RaiderDiagnostics.markBikeMode(dev.tvsopen.log.RaiderDiagnostics.ObservedBikeMode.POWER)
+                }) { Text("Observed POWER") }
+            }
             Text("Capture keeps 10 seconds before and 20 seconds after a mark, sampled per ID. " +
                 "Raw values are candidates, not calibrated measurements or ECU fault codes.")
             OutlinedButton(onClick = {

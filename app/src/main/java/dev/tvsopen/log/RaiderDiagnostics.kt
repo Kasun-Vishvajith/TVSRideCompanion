@@ -45,9 +45,16 @@ object RaiderDiagnostics {
         if (now <= until && capture.size < 6000) capture.addLast(row)
     }
 
-    @Synchronized fun mark(visible: Boolean) {
+    fun mark(visible: Boolean) = markEvent(if (visible) "NAV_VISIBLE" else "NAV_HIDDEN")
+
+    enum class ObservedBikeMode { ECO, POWER }
+
+    /** Manual dashboard observation only; never writes a mode command to the bike. */
+    fun markBikeMode(mode: ObservedBikeMode) = markEvent("BIKE_MODE_${mode.name}")
+
+    @Synchronized private fun markEvent(event: String) {
+        if (!enabled) return
         val now = SystemClock.elapsedRealtime()
-        val event = if (visible) "NAV_VISIBLE" else "NAV_HIDDEN"
         Log.i("RaiderObserver", "t=$now event=$event observer=manual " +
             "ble=${Session.connection.value.state} ready=${Session.connection.value.writeReady} phoneGuidance=${Session.hud.value.active}")
         if (!enabled) return
