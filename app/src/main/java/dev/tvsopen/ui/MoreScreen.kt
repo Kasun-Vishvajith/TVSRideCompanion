@@ -43,7 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.tvsopen.Nucleus
+import dev.tvsopen.nav.MapsNotificationListener
 import dev.tvsopen.data.DataExport
 import dev.tvsopen.prefs.RidePrefs
 import dev.tvsopen.protocol.Confidence
@@ -78,6 +80,8 @@ fun MoreScreen(
     onScan: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
+    val reader by MapsNotificationListener.readerStatus.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(16.dp),
@@ -202,13 +206,44 @@ fun MoreScreen(
                             "Notification access: required to read navigation, calls and messages",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    if (!notificationAccessGranted) {
+                    if (notificationAccessGranted) {
                         Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = onOpenNotificationAccess) {
-                            Icon(Icons.Filled.NotificationsActive, null, Modifier.size(18.dp))
-                            Spacer(Modifier.size(6.dp))
-                            Text("Open notification access")
+                        Text(
+                            when {
+                                !reader.connected -> "Notification reader: disconnected"
+                                reader.guidanceReceived -> "Notification reader: connected; guidance captured"
+                                reader.mapsNotificationReceived -> "Notification reader: connected; maps notification received, waiting for readable guidance"
+                                else -> "Notification reader: connected; waiting for a maps notification"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Start turn-by-turn navigation in your maps app and check that its navigation notification appears in the notification shade.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (!reader.connected) {
+                            OutlinedButton(onClick = { MapsNotificationListener.ensureConnected(context) }) {
+                                Text("Reconnect notification reader")
+                            }
                         }
+                        if (android.os.Build.MANUFACTURER.lowercase(Locale.ROOT) in setOf("xiaomi", "redmi", "poco")) {
+                            Text(
+                                "Xiaomi / Redmi / POCO: enable Background autostart for TVSRide and set its Battery saver to No restrictions. Menu names vary by MIUI / HyperOS version.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedButton(onClick = {
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${context.packageName}")))
+                            }) {
+                                Text("Open TVSRide app settings")
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(onClick = onOpenNotificationAccess) {
+                        Icon(Icons.Filled.NotificationsActive, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Open notification access")
                     }
                 }
             }

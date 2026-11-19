@@ -1,6 +1,9 @@
 package dev.tvsopen.nav
 
 import android.app.Notification
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
@@ -55,6 +58,11 @@ class MapsNotificationListener : NotificationListenerService() {
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
         val ongoing = n.isOngoing
+
+        if (pkg in allowedPackages && !_readerStatus.value.mapsNotificationReceived) {
+            _readerStatus.value = _readerStatus.value.copy(mapsNotificationReceived = true)
+            Log.i(TAG, "maps notification received provider=$pkg (content redacted)")
+        }
 
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty()
         val iconKind = notificationIconManeuver(n)
@@ -113,9 +121,17 @@ class MapsNotificationListener : NotificationListenerService() {
         // Package membership alone also matches Maps downloads and summaries.
         if ((parsed.distanceMeters < 0 && parsed.pictogram == null) ||
             (parsed.maneuver.isBlank() && parsed.street.isBlank())) {
+            if (pkg in allowedPackages && !unreadableGuidanceLogged) {
+                unreadableGuidanceLogged = true
+                Log.i(TAG, "maps notification has no readable guidance provider=$pkg " +
+                    "distanceKnown=${parsed.distanceMeters >= 0} directionKnown=${parsed.pictogram != null} " +
+                    "instructionPresent=${parsed.maneuver.isNotBlank() || parsed.street.isNotBlank()}")
+            }
             scheduleClear(key)
             return
         }
+        unreadableGuidanceLogged = false
+        _readerStatus.value = _readerStatus.value.copy(guidanceReceived = true)
         if (key != instructionKey) continuity.reset()
         instructionKey = key
         lifecycle.posted(key)
@@ -288,25 +304,65 @@ class MapsNotificationListener : NotificationListenerService() {
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingClear: Runnable? = null
+    private var unreadableGuidanceLogged = false
+
+    override fun onCreate() {
+        super.onCreate()
+        // Android may start the reader before the activity or ride service.
+        Log.enableFileSink(java.io.File(filesDir, "logs"))
+    }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        rebindGate.onConnected()
+        _readerStatus.value = NotificationReaderStatus(connected = true)
+        unreadableGuidanceLogged = false
         Log.i(TAG, "listener connected")
-        activeNotifications?.forEach { onNotificationPosted(it) }
+        runCatching { activeNotifications?.forEach { onNotificationPosted(it) } }
+            .onFailure { Log.w(TAG, "could not read active notifications: ${it.javaClass.simpleName}") }
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        _readerStatus.value = _readerStatus.value.copy(connected = false)
         Log.w(TAG, "listener disconnected — navigation mirroring unavailable")
+        ensureConnected(this)
     }
 
     override fun onDestroy() {
+        _readerStatus.value = _readerStatus.value.copy(connected = false)
         pendingClear?.let { handler.removeCallbacks(it) }
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "MapsNavListener"
+        private val _readerStatus = MutableStateFlow(NotificationReaderStatus())
+        val readerStatus: StateFlow<NotificationReaderStatus> = _readerStatus.asStateFlow()
+        private val rebindGate = NotificationRebindGate()
+
+        fun hasAccess(context: Context): Boolean {
+            val component = ComponentName(context, MapsNotificationListener::class.java)
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                context.getSystemService(NotificationManager::class.java)
+                    .isNotificationListenerAccessGranted(component)
+            } else {
+                android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+                    ?.split(':')?.any { ComponentName.unflattenFromString(it) == component } == true
+            }
+        }
+
+        /** Ask Android to bind again without toggling the user's permission. */
+        fun ensureConnected(context: Context) {
+            if (!rebindGate.shouldRequest(hasAccess(context), _readerStatus.value.connected,
+                    android.os.SystemClock.elapsedRealtime())) return
+            runCatching {
+                requestRebind(ComponentName(context, MapsNotificationListener::class.java))
+                Log.i(TAG, "notification reader reconnect requested")
+            }.onFailure {
+                Log.w(TAG, "notification reader reconnect failed: ${it.javaClass.simpleName}")
+            }
+        }
 
         /** Apps commonly posting messages/calls that riders expect to see. */
         private val APP_CALL_PACKAGES = setOf(

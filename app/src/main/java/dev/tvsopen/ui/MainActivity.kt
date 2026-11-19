@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.tvsopen.Nucleus
 import dev.tvsopen.log.Log
+import dev.tvsopen.nav.MapsNotificationListener
 import dev.tvsopen.prefs.RidePrefs
 import dev.tvsopen.protocol.VehicleModel
 import dev.tvsopen.session.Session
@@ -490,6 +491,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         notificationAccess = hasNotificationAccess()
+        MapsNotificationListener.ensureConnected(this)
         if (isFirstRun && hasBlePermission()) {
             // BLE may already have been granted from the system permission
             // manager before this activity's first resume. Still ask for the
@@ -578,8 +580,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hasNotificationAccess(): Boolean =
-        Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-            ?.contains(packageName) == true
+        MapsNotificationListener.hasAccess(this)
 
     private fun openNotificationAccess() {
         val i = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
