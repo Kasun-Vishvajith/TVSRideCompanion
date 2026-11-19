@@ -120,7 +120,7 @@ class MapsNotificationListener : NotificationListenerService() {
             // progress would be noise. Known packages plus any app whose
             // category is explicitly MESSAGE.
             if (pkg in MESSAGE_PACKAGES || category == Notification.CATEGORY_MESSAGE || hasMessageStyle) {
-                postMessage(n.key, pkg, extras, title)
+                postMessage(n.key, pkg, extras, title, text, prefs.messageSenders)
             }
         }
     }
@@ -202,41 +202,19 @@ class MapsNotificationListener : NotificationListenerService() {
         )
     }
 
-    private fun postMessage(key: String, pkg: String, extras: Bundle, title: String) {
-        val info = extractMessageInfo(extras, title)
-        val app = appLabel(pkg)
-        val display = when {
-            info.title.isNotBlank() && info.count > 1 -> "${info.title} ($app ${info.count})"
-            info.title.isNotBlank() && app.isNotBlank() -> "${info.title} ($app)"
-            info.title.isNotBlank() -> info.title
-            info.count > 1 -> "$app: ${info.count} msgs"
-            else -> app.ifBlank { "Message" }
-        }
-        Log.i(TAG, "message notification from $pkg (content redacted)")
-        Session.onAlert(
-            ClusterAlert(
-                kind = ClusterAlert.Kind.MESSAGE,
-                title = display,
-                subtitle = app,
-                key = key,
-            ),
-        )
-    }
-
-    private data class MessageInfo(val title: String, val count: Int)
-
-    private fun extractMessageInfo(extras: Bundle, fallbackTitle: String): MessageInfo {
+    private fun postMessage(key: String, pkg: String, extras: Bundle, title: String, text: String, allowed: String) {
         val style = extractMessagingStyle(extras)
-        if (style != null) {
-            val conv = style.conversationTitle?.toString()?.trim().orEmpty()
-            val messages = style.messages
-            val count = messages.size
-            val sender = conv.ifBlank {
-                messages.lastOrNull()?.senderPerson?.name?.toString()?.trim().orEmpty()
-            }
-            return MessageInfo(sender.ifBlank { fallbackTitle }, count.coerceAtLeast(1))
-        }
-        return MessageInfo(fallbackTitle, 1)
+        // Group conversations and summary notifications cannot identify a single
+        // approved sender reliably. Fail closed rather than leak their content.
+        if (style?.isGroupConversation == true || extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)) return
+        val message = style?.messages?.lastOrNull()
+        val sender = message?.senderPerson?.name?.toString()?.trim().orEmpty().ifBlank { title }
+        val nickname = messageNickname(allowed, sender) ?: return
+        val preview = (message?.text?.toString() ?: text).trim().replace(Regex("\\s+"), " ")
+        if (preview.isBlank()) return
+        Log.i(TAG, "message notification from $pkg (content redacted)")
+        Session.onAlert(ClusterAlert(kind = ClusterAlert.Kind.MESSAGE,
+            title = "${nickname.take(8)}: $preview", subtitle = "", key = key))
     }
 
     @Suppress("DEPRECATION")

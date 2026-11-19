@@ -72,6 +72,8 @@ import dev.tvsopen.ui.theme.NumberStyle
 @Composable
 fun OverviewScreen(
     telemetry: Telemetry,
+    parked: dev.tvsopen.session.ParkedInfo?,
+    connected: Boolean,
     vehicleModel: dev.tvsopen.protocol.VehicleModel = dev.tvsopen.protocol.VehicleModel.UNKNOWN,
     modifier: Modifier = Modifier,
 ) {
@@ -90,7 +92,31 @@ fun OverviewScreen(
             .padding(horizontal = 16.dp),
     ) {
         Spacer(Modifier.height(18.dp))
-        Text("Vehicle Overview", style = MaterialTheme.typography.headlineLarge)
+        val name = dev.tvsopen.prefs.RidePrefs.load(context).riderName?.takeIf { it.isNotBlank() }
+        Text(if (name == null) "Hello" else "Hello, $name", style = MaterialTheme.typography.headlineLarge)
+        Text(vehicleModel.displayName, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(16.dp))
+        androidx.compose.material3.Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Text("Odometer", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    telemetry.odometerKm?.let { "$it km" } ?: "—",
+                    style = dev.tvsopen.ui.theme.NumberStyle.copy(fontSize = 40.sp, lineHeight = 48.sp),
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        LastParkedCard(parked) { openParkedLocation(context, parked) }
+        Spacer(Modifier.height(16.dp))
+        if (!connected) {
+            Text("Connect your vehicle to refresh readings.", style = MaterialTheme.typography.bodyMedium)
+            return@Column
+        }
         Text(
             if (isRaider) "Raider 125 · 5 fuel segments · Trip A / B · Gear / neutral"
             else "Live from the instrument cluster",

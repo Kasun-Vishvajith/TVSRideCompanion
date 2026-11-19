@@ -12,8 +12,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.Icon
@@ -41,6 +50,7 @@ import dev.tvsopen.prefs.RidePrefs
 import dev.tvsopen.protocol.VehicleModel
 import dev.tvsopen.session.Session
 import dev.tvsopen.transport.ConnectionState
+import dev.tvsopen.transport.label
 import dev.tvsopen.transport.RideService
 import dev.tvsopen.transport.ScooterPairing
 import dev.tvsopen.transport.ScooterScanner
@@ -48,7 +58,7 @@ import dev.tvsopen.ui.theme.ThemePrefs
 import dev.tvsopen.ui.theme.TVSRideTheme
 
 /**
- * Single-activity host: bottom navigation between Home and More.
+ * Single-activity host for Ride, Settings, and Overview.
  *
  * Deliberately thin. The protocol layer is the substance; the UI observes state
  * and sends intents to [RideService]. There is no account, no repository and no
@@ -189,6 +199,9 @@ class MainActivity : AppCompatActivity() {
         hasNotificationAccess: Boolean,
     ) {
         var tab by rememberSaveable { mutableStateOf(0) }
+        LaunchedEffect(scanning.value) {
+            if (scanning.value) tab = 2
+        }
         var findMy by rememberSaveable { mutableStateOf(false) }
         // On by default: mirroring is the app's reason to exist.
         //
@@ -215,12 +228,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val telemetry by Session.telemetry.collectAsStateWithLifecycle()
-        val hud by Session.hud.collectAsStateWithLifecycle()
         val connection by Session.connection.collectAsStateWithLifecycle()
-        val rides by Session.rides.collectAsStateWithLifecycle()
-        val totalRides by Session.totalRides.collectAsStateWithLifecycle()
-        val totalRideDistanceKm by Session.totalRideDistanceKm.collectAsStateWithLifecycle()
 
         // Everything the UI shows comes from the process-scoped Session, which
         // the BLE service and the notification listener both write into. The
@@ -254,98 +262,106 @@ class MainActivity : AppCompatActivity() {
 
         TVSRideTheme(mode = ThemePrefs.mode, darkTheme = isSystemInDarkTheme()) {
             Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
                 bottomBar = {
-                    // Hidden while the scanner is open. The scan screen is a
-                    // full-screen takeover with its own back arrow, so a live
-                    // nav bar underneath was an affordance that lied: tapping a
-                    // tab highlighted it and left you exactly where you were.
-                    if (!scanning.value) NavigationBar {
-                        NavigationBarItem(
-                            selected = tab == 0,
-                            onClick = { tab = 0 },
-                            icon = { Icon(Icons.Filled.Home, contentDescription = "Home") },
-                            label = { Text("Home") },
-                        )
-                        NavigationBarItem(
-                            selected = tab == 1,
-                            onClick = { tab = 1 },
-                            icon = { Icon(Icons.Filled.MoreHoriz, contentDescription = "More") },
-                            label = { Text("More") },
-                        )
-                        NavigationBarItem(
-                            selected = tab == 2,
-                            onClick = { tab = 2 },
-                            icon = { Icon(Icons.Filled.Speed, contentDescription = "Overview") },
-                            label = { Text("Overview") },
-                        )
-                        NavigationBarItem(
-                            selected = tab == 3,
-                            onClick = { tab = 3 },
-                            icon = { Icon(Icons.AutoMirrored.Filled.Article, contentDescription = "Log") },
-                            label = { Text("Log") },
-                        )
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 0.dp) {
+                        listOf(
+                            "Overview" to Icons.Filled.Home,
+                            "Live" to Icons.Filled.Speed,
+                            "Connect" to Icons.Filled.Bluetooth,
+                            "Alerts" to Icons.Filled.NotificationsActive,
+                            "Settings" to Icons.Filled.MoreHoriz,
+                        ).forEachIndexed { index, (label, icon) ->
+                            NavigationBarItem(
+                                selected = index == tab,
+                                onClick = {
+                                    if (index != 2) scanning.value = false
+                                    tab = index
+                                },
+                                icon = { Icon(icon, contentDescription = null) },
+                                label = { Text(label, maxLines = 1) },
+                            )
+                        }
                     }
                 },
             ) { padding ->
                 androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
-                    if (scanning.value) {
-                        // Full-screen takeover rather than a dialog: the scan has
-                        // a filter switch, a list and a model picker, and a
-                        // dialog would either clip or cover the nav bar.
-                        ScanScreen(
-                            scanner = scanner,
-                            pairing = pairing,
-                            lastModelId = RidePrefs.load(this@MainActivity).lastModelId,
-                            onPick = { address, model ->
-                                scanning.value = false
-                                RidePrefs.load(this@MainActivity)
-                                    .updateSelectedModel(address, model.name)
-                                RidePrefs.load(this@MainActivity)
-                                    .updateLastConnection(address, model.name)
-                                connectTo(address, model)
-                            },
-                            onBack = { scanning.value = false },
-                        )
-                    } else if (tab == 0) {
-                        HomeScreen(
-                            telemetry = telemetry,
-                            hud = hud,
-                            connection = connection,
-                            parked = parked,
-                            rideMode = rideMode,
-                            findMyEnabled = findMy,
-                            navMirroring = navMirroring,
-                            onFindMyChange = { on ->
-                                findMy = on
-                                // Off used to send ACTION_FIND_MY too, so the
-                                // rider could never switch it back off from the
-                                // UI — the toggle started the action regardless
-                                // of its new value.
-                                onFindMyChange(
-                                    if (on) RideService.ACTION_FIND_MY
-                                    else RideService.ACTION_STOP_FIND_MY,
-                                )
-                            },
-                            onNavMirrorChange = { on ->
-                                navMirroring = on
-                                RidePrefs.load(this@MainActivity).navigationMirroring = on
-                                onNavMirrorChange(
-                                    if (on) RideService.ACTION_START_NAV
-                                    else RideService.ACTION_STOP_NAV,
-                                )
-                            },
-                            onRideModeChange = { on ->
-                                RidePrefs.load(this@MainActivity).updateResumeOnBoot(on)
-                            },
-                            onOpenOverview = { tab = 2 },
-                            onOpenParked = { tab = 2 },
-                            // The Connect card now opens the scanner. It used to
-                            // send ACTION_CONNECT with no address, which the
-                            // service logged and ignored — the only reason a
-                            // connection could never start.
-                            onConnect = { openScanner() },
-                        )
+                    if (tab == 2) {
+                        if (scanning.value) {
+                            ScanScreen(
+                                scanner = scanner,
+                                pairing = pairing,
+                                lastModelId = RidePrefs.load(this@MainActivity).lastModelId,
+                                onPick = { address, model ->
+                                    scanning.value = false
+                                    RidePrefs.load(this@MainActivity).updateSelectedModel(address, model.name)
+                                    RidePrefs.load(this@MainActivity).updateLastConnection(address, model.name)
+                                    connectTo(address, model)
+                                },
+                            )
+                        } else {
+                            val pending = connection.state == ConnectionState.CONNECTING ||
+                                connection.state == ConnectionState.RECONNECTING
+                            ConnectionPanel("Connect", connection.state.label) {
+                                Button(onClick = onScan, enabled = !pending, modifier = Modifier.fillMaxWidth()) {
+                                    Text(if (pending) "Connecting…" else "Find nearby vehicles")
+                                }
+                                if (connection.state != ConnectionState.DISCONNECTED) {
+                                    OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
+                                        Text("Disconnect")
+                                    }
+                                }
+                            }
+                        }
                     } else if (tab == 1) {
+                        if (connection.state == ConnectionState.CONNECTED) {
+                            HomeScreen(
+                                connection = connection,
+                                parked = parked,
+                                rideMode = rideMode,
+                                findMyEnabled = findMy,
+                                navMirroring = navMirroring,
+                                onFindMyChange = { on ->
+                                    findMy = on
+                                    // Off used to send ACTION_FIND_MY too, so the
+                                    // rider could never switch it back off from the
+                                    // UI — the toggle started the action regardless
+                                    // of its new value.
+                                    onFindMyChange(
+                                        if (on) RideService.ACTION_FIND_MY
+                                        else RideService.ACTION_STOP_FIND_MY,
+                                    )
+                                },
+                                onNavMirrorChange = { on ->
+                                    navMirroring = on
+                                    RidePrefs.load(this@MainActivity).navigationMirroring = on
+                                    onNavMirrorChange(
+                                        if (on) RideService.ACTION_START_NAV
+                                        else RideService.ACTION_STOP_NAV,
+                                    )
+                                },
+                                onRideModeChange = { on ->
+                                    RidePrefs.load(this@MainActivity).updateResumeOnBoot(on)
+                                },
+                                onOpenOverview = { tab = 0 },
+                                onOpenParked = { tab = 0 },
+                                // The Connect card now opens the scanner. It used to
+                                // send ACTION_CONNECT with no address, which the
+                                // service logged and ignored — the only reason a
+                                // connection could never start.
+                                onConnect = { tab = 2 },
+                            )
+                        } else {
+                            ConnectionPanel("Live", "Connect your vehicle to see live speed and navigation.") {
+                                Button(onClick = { tab = 2 }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Go to Connect")
+                                }
+                            }
+                        }
+                    } else if (tab == 4) {
+                        val rides by Session.rides.collectAsStateWithLifecycle()
+                        val totalRides by Session.totalRides.collectAsStateWithLifecycle()
+                        val totalRideDistanceKm by Session.totalRideDistanceKm.collectAsStateWithLifecycle()
                         MoreScreen(
                             connection = connection,
                             riderName = RidePrefs.load(this@MainActivity).riderName,
@@ -371,19 +387,18 @@ class MainActivity : AppCompatActivity() {
                             onScan = onScan,
                             onDisconnect = onDisconnect,
                         )
-                    } else if (tab == 2) {
-                        // Must match the nav bar order: Home, More, Overview,
-                        // Log. These two destinations were swapped, so tapping
-                        // Overview rendered the log and tapping Log rendered
-                        // the dashboard.
+                    } else if (tab == 0) {
+                        val telemetry by Session.telemetry.collectAsStateWithLifecycle()
                         OverviewScreen(
                             telemetry = telemetry,
+                            parked = parked,
+                            connected = connection.state == ConnectionState.CONNECTED,
                             vehicleModel = VehicleModel.dashboardModel(
                                 connection.model, RidePrefs.load(this@MainActivity).lastModelId,
                             ),
                         )
                     } else {
-                        LogScreen()
+                        AlertsScreen(connection)
                     }
                 }
             }
@@ -606,5 +621,28 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         const val PREFS = "tvsride"
         const val KEY_FIRST_RUN = "first_run_complete"
+    }
+}
+
+
+@Composable
+private fun ConnectionPanel(title: String, description: String, actions: @Composable () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineLarge)
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(description, style = MaterialTheme.typography.bodyLarge)
+                actions()
+            }
+        }
     }
 }

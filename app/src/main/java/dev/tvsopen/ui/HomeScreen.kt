@@ -1,7 +1,6 @@
 package dev.tvsopen.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -44,7 +42,10 @@ import androidx.compose.ui.unit.sp
 import android.content.Intent
 import android.net.Uri
 import dev.tvsopen.session.ConnectionState1
-import dev.tvsopen.session.HudState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.text.style.TextOverflow
+import dev.tvsopen.session.Session
 import dev.tvsopen.session.ParkedInfo
 import dev.tvsopen.session.Telemetry
 import dev.tvsopen.transport.ConnectionState
@@ -53,25 +54,9 @@ import dev.tvsopen.ui.theme.LocalTilePalette
 import dev.tvsopen.ui.theme.NumberStyle
 import kotlinx.coroutines.delay
 
-/**
- * Dashboard.
- *
- * Card navigation rather than a wall of values: connect, then the two places
- * there is something to read. Mirrors the official TVS app's Ntorq dashboard,
- * minus everything that is cloud-backed (ride history, ride modes, the server
- * "last parked" pin) because this app has no account and no network.
- *
- * Layout shape adapted from `overclock98/JupiterRideCompanion` (CC BY-NC 4.0),
- * with no TVS or Jupiter branding — that project is the Jupiter's companion,
- * this one is unaffiliated and model-universal.
- *
- * Every absent value renders as an em dash. A `0` would be a lie: it would mean
- * the UI had invented a reading rather than reporting that nothing arrived.
- */
+/** The rider dashboard. Unavailable readings are displayed as an em dash. */
 @Composable
 fun HomeScreen(
-    telemetry: Telemetry,
-    hud: HudState,
     connection: ConnectionState1,
     parked: ParkedInfo?,
     findMyEnabled: Boolean,
@@ -87,60 +72,55 @@ fun HomeScreen(
 ) {
     val connected = connection.state == ConnectionState.CONNECTED
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-    ) {
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Header(connection, connected)
+        Spacer(Modifier.height(12.dp))
+        NavigationStrip()
+        Spacer(Modifier.height(12.dp))
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            RideSpeed(connected)
+            Spacer(Modifier.height(16.dp))
+            ConnectCard(connection.state, onConnect)
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("Your vehicle")
 
-        if (hud.active) {
-            Spacer(Modifier.height(10.dp))
-            NavigationStrip(hud)
-        }
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("Your vehicle")
-
-        // Card navigation rather than a value grid, mirroring the official app's
-        // dashboard. The values live on the Overview tab where they belong.
-        val ctx = LocalContext.current
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            NavCard(Modifier.weight(1f), Icons.Filled.Speed, "Overview", onOpenOverview)
-            NavCard(Modifier.weight(1f), Icons.Filled.Place, "Last parked") {
-                if (!openParkedLocation(ctx, parked)) onOpenParked()
+            // Card navigation rather than a value grid, mirroring the official app's
+            // dashboard. The values live on the Overview tab where they belong.
+            val ctx = LocalContext.current
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                NavCard(Modifier.weight(1f), Icons.Filled.Speed, "Overview", onOpenOverview)
+                NavCard(Modifier.weight(1f), Icons.Filled.Place, "Last parked") {
+                    if (!openParkedLocation(ctx, parked)) onOpenParked()
+                }
             }
+            Spacer(Modifier.height(12.dp))
+            // This preference is shared with More and read by BootReceiver.
+            RideModeCard(rideMode, onRideModeChange)
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("While riding")
+
+            MirrorNavCard(navMirroring, onNavMirrorChange)
+            Spacer(Modifier.height(12.dp))
+            if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125 ||
+                connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_180) {
+                Text("Find parked motorcycle uses the saved phone location. " +
+                    "Remote horn and light activation is not verified for Raider and is disabled.",
+                    style = MaterialTheme.typography.bodySmall)
+            } else FindMyCard(findMyEnabled, onFindMyChange)
+            Spacer(Modifier.height(12.dp))
+            LastParkedCard(parked) {
+                openParkedLocation(ctx, parked)
+            }
+
+            // Telemetry freshness is the number that actually tells you whether the
+            // link is alive. The frame counter belongs in the Log tab, not here.
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Link")
+            LinkCard()
+
+            Spacer(Modifier.height(28.dp))
         }
-        Spacer(Modifier.height(12.dp))
-        ConnectCard(connected, connection.state.label, onConnect)
-        Spacer(Modifier.height(12.dp))
-        // This preference is shared with More and read by BootReceiver.
-        RideModeCard(rideMode, onRideModeChange)
-
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("While riding")
-
-        MirrorNavCard(navMirroring, hud, onNavMirrorChange)
-        Spacer(Modifier.height(12.dp))
-        if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125 ||
-            connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_180) {
-            Text("Find parked motorcycle uses the saved phone location. " +
-                "Remote horn and light activation is not verified for Raider and is disabled.",
-                style = MaterialTheme.typography.bodySmall)
-        } else FindMyCard(findMyEnabled, onFindMyChange)
-        Spacer(Modifier.height(12.dp))
-        LastParkedCard(parked) {
-            openParkedLocation(ctx, parked)
-        }
-
-        // Telemetry freshness is the number that actually tells you whether the
-        // link is alive. The frame counter belongs in the Log tab, not here.
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("Link")
-        LinkCard(telemetry)
-
-        Spacer(Modifier.height(28.dp))
     }
 }
 
@@ -179,21 +159,13 @@ private fun NavCard(
     }
 }
 
-/**
- * The connection card.
- *
- * Honest about state: says "Not connected" rather than pretending a scan is
- * running, because there is no scan screen yet and the button reconnects to
- * the last known cluster.
- */
 @Composable
-private fun ConnectCard(connected: Boolean, stateLabel: String, onClick: () -> Unit) {
-    // Both named, neither positional: the clickable Surface overload takes
-    // `onClick` first, so a leading positional Modifier binds to it and no
-    // overload matches — which then cascades into "invocations can only happen
-    // from the context of a @Composable function" on the content lambda.
+private fun ConnectCard(state: ConnectionState, onClick: () -> Unit) {
+    val pending = state == ConnectionState.CONNECTING || state == ConnectionState.RECONNECTING
+    val connected = state == ConnectionState.CONNECTED
     Surface(
         onClick = onClick,
+        enabled = !pending,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         color = LocalTilePalette.current.accent,
@@ -212,12 +184,12 @@ private fun ConnectCard(connected: Boolean, stateLabel: String, onClick: () -> U
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (connected) "Connected" else "Connect",
+                    if (pending) state.label else if (connected) "Find another vehicle" else "Connect",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    if (connected) "Using Bluetooth" else stateLabel,
+                    if (pending) "Waiting for the vehicle" else "Nearby Bluetooth vehicles",
                     style = MaterialTheme.typography.bodyMedium,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -250,7 +222,7 @@ private fun Header(connection: ConnectionState1, connected: Boolean) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("TVSRide", style = MaterialTheme.typography.headlineLarge)
+            Text("Live", style = MaterialTheme.typography.headlineLarge)
             Text(
                 connection.model.displayName,
                 style = MaterialTheme.typography.bodyMedium,
@@ -261,16 +233,7 @@ private fun Header(connection: ConnectionState1, connected: Boolean) {
             if (connected) "Connected" else connection.state.label,
             connected,
         )
-        Spacer(Modifier.width(8.dp))
-        Box(
-            Modifier
-                .size(36.dp)
-                .background(
-                    if (connected) LocalTilePalette.current.connected
-                    else MaterialTheme.colorScheme.outline,
-                    CircleShape,
-                ),
-        )
+
     }
 }
 
@@ -312,7 +275,8 @@ private fun Pill(text: String, on: Boolean) {
  * not a TVS server.
  */
 @Composable
-private fun MirrorNavCard(enabled: Boolean, hud: HudState, onChange: (Boolean) -> Unit) {
+private fun MirrorNavCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    val hud by Session.hud.collectAsStateWithLifecycle()
     ActionCard(
         background = LocalTilePalette.current.accent,
         icon = Icons.Filled.Navigation,
@@ -327,7 +291,7 @@ private fun MirrorNavCard(enabled: Boolean, hud: HudState, onChange: (Boolean) -
 }
 
 @Composable
-private fun LastParkedCard(parked: ParkedInfo?, onClick: () -> Unit = {}) {
+internal fun LastParkedCard(parked: ParkedInfo?, onClick: () -> Unit = {}) {
     val tick = rememberTicker()
     val ago = remember(parked, tick) {
         parked?.let { relativeTime(System.currentTimeMillis() - it.atMillis) }
@@ -360,7 +324,7 @@ private fun LastParkedCard(parked: ParkedInfo?, onClick: () -> Unit = {}) {
     )
 }
 
-private fun openParkedLocation(context: android.content.Context, parked: ParkedInfo?): Boolean {
+internal fun openParkedLocation(context: android.content.Context, parked: ParkedInfo?): Boolean {
     val label = parked?.label ?: return false
     val parts = label.split(",").mapNotNull { it.trim().toDoubleOrNull() }
     if (parts.size != 2) return false
@@ -467,7 +431,8 @@ private fun rememberTicker(): Long {
  * looks identical whether the link is streaming or died a minute ago.
  */
 @Composable
-private fun LinkCard(telemetry: Telemetry) {
+private fun LinkCard() {
+    val telemetry by Session.telemetry.collectAsStateWithLifecycle()
     val tick = rememberTicker()
     val age = remember(telemetry.lastFrameAt, tick) {
         if (telemetry.lastFrameAt == 0L) null
@@ -495,56 +460,59 @@ private fun LinkCard(telemetry: Telemetry) {
 }
 
 @Composable
-private fun NavigationStrip(hud: HudState) {
+private fun RideSpeed(connected: Boolean) {
+    val telemetry by Session.telemetry.collectAsStateWithLifecycle()
+    val tick = rememberTicker()
+    val speed = remember(telemetry, tick, connected) {
+        if (connected) telemetry.forDisplay(System.currentTimeMillis()).speedKmh else null
+    }
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Current speed", style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(speed?.toString() ?: "—", style = NumberStyle.copy(fontSize = 56.sp, lineHeight = 64.sp))
+                Text("km/h", Modifier.padding(start = 8.dp, bottom = 8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavigationStrip() {
+    val hud by Session.hud.collectAsStateWithLifecycle()
+    val arrow = if (hud.active) dev.tvsopen.nav.NavShortCodes.uiArrow(hud.pictogramId) else ""
     Surface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.primaryContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     ) {
-        Column(Modifier.padding(14.dp)) {
-            // Both fields are skipped when blank rather than defaulted. Google
-            // Maps puts the distance in the title, so the title is legitimately
-            // empty once that is moved to the distance row — rendering "?"
-            // for it, or an empty line above the street, both look broken.
-            hud.instructionTitle?.takeIf { it.isNotBlank() }?.let {
-                val arrow = dev.tvsopen.nav.NavShortCodes.uiArrow(hud.pictogramId)
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(56.dp), contentAlignment = Alignment.Center) {
+                if (arrow.isEmpty()) {
+                    Icon(Icons.Filled.Navigation, contentDescription = null)
+                } else {
+                    Text(arrow, style = MaterialTheme.typography.headlineLarge.copy(fontSize = 40.sp, lineHeight = 48.sp))
+                }
+            }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(
-                    if (arrow.isNotEmpty()) "$arrow $it" else it,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    if (hud.active && hud.distanceMeters >= 0) "${hud.distanceMeters} m" else "—",
+                    style = NumberStyle.copy(fontSize = 36.sp, lineHeight = 44.sp),
+                    maxLines = 1,
                 )
-            }
-            hud.street?.takeIf { it.isNotBlank() }?.let {
                 Text(
-                    it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    if (hud.active) hud.street?.takeIf { it.isNotBlank() }
+                        ?: hud.instructionTitle?.takeIf { it.isNotBlank() } ?: "Next maneuver"
+                    else "Waiting for directions",
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            }
-            // -1 is the "no distance in the notification" sentinel, so never
-            // render it as a figure: it reached the cluster as 0 and the strip
-            // used to say "-1 m" while the dash said 0.
-            val distance = hud.distanceMeters
-            Text(
-                "Next maneuver: ${if (distance >= 0) "$distance m" else "—"} · ${hud.etaMinutes} min",
-                style = NumberStyle,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Text("Trip remaining: ${hud.remainingTripMeters?.let { "$it m" } ?: "—"}" +
-                if (hud.totalHeld) " (recent reading)" else "",
-                style = MaterialTheme.typography.bodyMedium)
-            if (hud.pictogramId == null) {
-                Text("Direction unavailable: the cluster's straight arrow is a placeholder. Follow Maps guidance.",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (hud.distanceMeters < 0) {
-                Text("Next-turn distance unavailable: the cluster's turn field is a placeholder.",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (hud.remainingTripMeters == null) {
-                Text("Trip total unavailable: the cluster's total field is a placeholder, not a measured zero.",
-                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }

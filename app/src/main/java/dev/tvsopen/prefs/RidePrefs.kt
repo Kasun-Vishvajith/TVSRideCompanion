@@ -107,10 +107,15 @@ class RidePrefs private constructor(private val ctx: Context) {
         sp.edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
     }
 
-    /** Mirror message/app notifications (sender and count, never the message text). */
+    /** Mirror previews only for explicitly selected notification names. */
     var mirrorMessages: Boolean
         get() = sp.getBoolean(KEY_MIRROR_MESSAGES, false)
         set(value) { sp.edit().putBoolean(KEY_MIRROR_MESSAGES, value).apply() }
+
+    /** Notification name = nickname, one per line; empty means no messages. */
+    var messageSenders: String
+        get() = sp.getString("message_senders", "") ?: ""
+        set(value) { sp.edit().putString("message_senders", value).apply() }
 
     /** Local profile name; UI can edit it without sending an unverified packet. */
     var riderName: String?

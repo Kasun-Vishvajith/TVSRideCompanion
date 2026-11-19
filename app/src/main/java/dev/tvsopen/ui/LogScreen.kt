@@ -69,11 +69,12 @@ fun LogScreen(modifier: Modifier = Modifier) {
     // 500, so once full the size never changes and Follow silently stops.
     LaunchedEffect(visible.lastOrNull(), autoScroll) {
         if (autoScroll && visible.isNotEmpty()) {
-            listState.animateScrollToItem(visible.lastIndex)
+            listState.scrollToItem(visible.lastIndex)
         }
     }
 
-    Column(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Text("Logs", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.headlineLarge)
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(

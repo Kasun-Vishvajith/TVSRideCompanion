@@ -97,6 +97,10 @@ fun MoreScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            Text("Settings", style = MaterialTheme.typography.headlineLarge)
+            Text("Customize your ride and manage permissions.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
             Text("KEEP THE CONNECTION ALIVE", style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -269,69 +273,12 @@ fun MoreScreen(
         item { KeepScreenOnCard(enabled = keepScreenOn, onChange = onKeepScreenOnChange) }
 
         item {
-            Text("ALERTS", style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        item {
-            val ctx = LocalContext.current
-            val prefs = remember { RidePrefs.load(ctx) }
-            var mirrorCalls by remember { mutableStateOf(prefs.mirrorPhoneCalls) }
-            var mirrorMessages by remember { mutableStateOf(prefs.mirrorMessages) }
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125) {
-                        Text("Raider call/message rendering is unverified. These switches request forwarding; they do not confirm cluster support.",
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text("Phone & app calls", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Show incoming calls (phone, WhatsApp, Telegram, etc.) on the cluster.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        AppSwitch(
-                            checked = mirrorCalls,
-                            onCheckedChange = {
-                                mirrorCalls = it
-                                prefs.mirrorPhoneCalls = it
-                            },
-                        )
-                    }
-                    HorizontalDivider()
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                            Text("Messages", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Show sender and app (WhatsApp, Telegram, SMS, etc.). Message text is never sent.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        AppSwitch(
-                            checked = mirrorMessages,
-                            onCheckedChange = {
-                                mirrorMessages = it
-                                prefs.mirrorMessages = it
-                            },
-                        )
-                    }
-                }
+            var showLogs by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { showLogs = !showLogs }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showLogs) "Hide diagnostic logs" else "Show diagnostic logs")
             }
+            if (showLogs) LogScreen(modifier = Modifier.height(400.dp))
         }
-
         item { VehicleEvidenceCard(connection.model) }
 
         item {
@@ -906,6 +853,88 @@ private fun VehicleEvidenceCard(selected: dev.tvsopen.protocol.VehicleModel) {
                     "Text scrolling is separate. An unavailable direction uses the straight placeholder with a phone warning.",
                     style = MaterialTheme.typography.bodySmall)
             }
+        }
+    }
+}
+
+
+@Composable
+internal fun AlertsScreen(connection: dev.tvsopen.session.ConnectionState1) {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Text("Alerts", style = MaterialTheme.typography.headlineLarge)
+            Text("Choose what appears on the cluster.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item { AlertPreferences(connection) }
+    }
+}
+
+@Composable
+private fun AlertPreferences(connection: dev.tvsopen.session.ConnectionState1) {
+    val ctx = LocalContext.current
+    val prefs = remember { RidePrefs.load(ctx) }
+    var mirrorCalls by remember { mutableStateOf(prefs.mirrorPhoneCalls) }
+    var mirrorMessages by remember { mutableStateOf(prefs.mirrorMessages) }
+    var messageSenders by remember { mutableStateOf(prefs.messageSenders) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (connection.model == dev.tvsopen.protocol.VehicleModel.RAIDER_125) {
+                Text("Raider call/message rendering is unverified. These switches request forwarding; they do not confirm cluster support.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Phone & app calls", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Show incoming calls (phone, WhatsApp, Telegram, etc.) on the cluster.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AppSwitch(
+                    checked = mirrorCalls,
+                    onCheckedChange = {
+                        mirrorCalls = it
+                        prefs.mirrorPhoneCalls = it
+                    },
+                )
+            }
+            HorizontalDivider()
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Messages", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Show a short preview from selected senders using your nickname for each one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AppSwitch(
+                    checked = mirrorMessages,
+                    onCheckedChange = {
+                        mirrorMessages = it
+                        prefs.mirrorMessages = it
+                    },
+                )
+            }
+            OutlinedTextField(
+                value = messageSenders,
+                onValueChange = { messageSenders = it; prefs.messageSenders = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Notification name = nickname") },
+                supportingText = { Text("One per line, e.g. Alex Silva = Alex. Use the exact notification name. Group messages are excluded.") },
+            )
         }
     }
 }

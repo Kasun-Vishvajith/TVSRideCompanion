@@ -1,6 +1,9 @@
 package dev.tvsopen.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Shapes
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -18,63 +21,31 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/**
- * Palette, mapped from the token set in `DESIGN.md` (Coinbase-inspired
- * system: single blue accent, white canvas, near-black dark canvas).
- *
- * Token mapping (light / dark):
- * - primary #0052FF both; CTAs stay blue on either canvas per the system.
- * - primaryContainer is the neutral card fill (surface-strong #EEF0F3 /
- *   surface-dark-elevated #16181C), not a blue tint: blue is scarce.
- * - tertiary is the darker/faded blue step (primary-active #003ECC /
- *   primary-disabled #A8B8CC, readable on black). It signals WARN-level
- *   and unverified-provenance rows, never brand.
- * - error is semantic-down #CF202F, text/fill per the trading-semantics rule.
- *
- * Two deliberate constraints, both about not misrepresenting provenance:
- *
- *  1. Not TVS's racing red/black. This is an unaffiliated project; borrowing
- *     their brand palette would imply endorsement.
- *  2. No TVS or Jupiter marks, logos or model wordmarks anywhere in the UI. The
- *     layout is adapted from `overclock98/JupiterRideCompanion` (CC BY-NC 4.0),
- *     whose header carries the TVS logo and the Jupiter name. We keep the
- *     *structure* — name, connection pill, status dot — and substitute our own
- *     identifiers. See `research/SOURCES.md`.
- */
+/** Light canvas and high contrast surfaces for daylight use. */
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0052FF),
+    primary = Color(0xFF254CCB),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFEEF0F3),
-    onPrimaryContainer = Color(0xFF0A0B0D),
-    secondary = Color(0xFF5B616E),
+    primaryContainer = Color(0xFFDFE7FF),
+    onPrimaryContainer = Color(0xFF101725),
+    secondary = Color(0xFF475569),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFEEF0F3),
-    onSecondaryContainer = Color(0xFF0A0B0D),
+    secondaryContainer = Color(0xFFDCE5FE),
+    onSecondaryContainer = Color(0xFF101725),
     tertiary = Color(0xFF003ECC),
-    tertiaryContainer = Color(0xFFEEF0F3),
-    onTertiaryContainer = Color(0xFF0A0B0D),
+    tertiaryContainer = Color(0xFFDFE7FF),
+    onTertiaryContainer = Color(0xFF101725),
     error = Color(0xFFCF202F),
     onError = Color.White,
-    background = Color(0xFFFFFFFF),
+    background = Color(0xFFF1F4FA),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0A0B0D),
-    surfaceVariant = Color(0xFFF7F7F7),
-    onSurfaceVariant = Color(0xFF5B616E),
-    outline = Color(0xFFDEE1E6),
+    onSurface = Color(0xFF101725),
+    surfaceVariant = Color(0xFFFFFFFF),
+    onSurfaceVariant = Color(0xFF475569),
+    outline = Color(0xFFD8DFEA),
+    surfaceContainer = Color(0xFFFFFFFF),
+    surfaceContainerHighest = Color(0xFFFFFFFF),
 )
 
-/**
- * Tile fills, drawn from the `DESIGN.md` neutral surfaces.
- *
- * Every tile is the same fill (surface-soft #F7F7F7 / surface-dark-elevated
- * #16181C). Separation between adjacent tiles comes from the 1dp hairline
- * border on each tile Surface (`outline` token) — the system's own
- * "hairline border on white" card treatment — not from hue cycling. The old
- * three-hue cycle existed only to keep same-colour neighbours apart, and a
- * single neutral plus border does that with less visual noise.
- *
- * `connected` is the token semantic green #05B169: a status dot, never text.
- */
 @Immutable
 data class TilePalette(
     val largeLeft: Color,
@@ -88,24 +59,24 @@ data class TilePalette(
 )
 
 private val LightTiles = TilePalette(
-    largeLeft = Color(0xFFF7F7F7),
-    largeRight = Color(0xFFF7F7F7),
-    small1 = Color(0xFFF7F7F7),
-    small2 = Color(0xFFF7F7F7),
-    small3 = Color(0xFFF7F7F7),
-    neutral = Color(0xFFF7F7F7),
-    accent = Color(0xFFF7F7F7),
+    largeLeft = Color(0xFFFFFFFF),
+    largeRight = Color(0xFFFFFFFF),
+    small1 = Color(0xFFFFFFFF),
+    small2 = Color(0xFFFFFFFF),
+    small3 = Color(0xFFFFFFFF),
+    neutral = Color(0xFFFFFFFF),
+    accent = Color(0xFFFFFFFF),
     connected = Color(0xFF05B169),   // status dot
 )
 
 private val DarkTiles = TilePalette(
-    largeLeft = Color(0xFF16181C),
-    largeRight = Color(0xFF16181C),
-    small1 = Color(0xFF16181C),
-    small2 = Color(0xFF16181C),
-    small3 = Color(0xFF16181C),
-    neutral = Color(0xFF16181C),
-    accent = Color(0xFF16181C),
+    largeLeft = Color(0xFF182233),
+    largeRight = Color(0xFF182233),
+    small1 = Color(0xFF182233),
+    small2 = Color(0xFF182233),
+    small3 = Color(0xFF182233),
+    neutral = Color(0xFF182233),
+    accent = Color(0xFF182233),
     connected = Color(0xFF05B169),   // status dot
 )
 
@@ -127,10 +98,10 @@ fun AppSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
         checked = checked,
         onCheckedChange = onCheckedChange,
         colors = SwitchDefaults.colors(
-            checkedTrackColor = Color(0xFF0052FF),
+            checkedTrackColor = Color(0xFF254CCB),
             checkedThumbColor = Color.White,
             checkedBorderColor = Color.Transparent,
-            uncheckedTrackColor = if (dark) Color(0xFF5B616E) else Color(0xFFA8ACB3),
+            uncheckedTrackColor = if (dark) Color(0xFF475569) else Color(0xFFB0BED2),
             uncheckedThumbColor = Color.White,
             uncheckedBorderColor = Color.Transparent,
         ),
@@ -138,7 +109,8 @@ fun AppSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
 }
 
 private val AppTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 30.sp, fontWeight = FontWeight.Normal),
+    headlineLarge = TextStyle(fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.SemiBold),
+    headlineSmall = TextStyle(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.SemiBold),
     titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
     titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Normal),
     labelLarge = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
@@ -158,31 +130,28 @@ val NumberStyle = TextStyle(
     fontWeight = FontWeight.Medium,
 )
 
-/**
- * Dark scheme: near-black canvas #0A0B0D with #16181C elevated cards, per
- * `DESIGN.md` (`surface-dark`, `surface-dark-elevated`). Blue stays #0052FF —
- * CTAs are blue pills on either canvas. Error stays semantic-down #CF202F,
- * which is the system's own dark-hero price-cell treatment.
- */
+/** Dark canvas with raised surfaces and a lighter accent. */
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF0052FF),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF16181C),
+    primary = Color(0xFFB7C7FF),
+    onPrimary = Color(0xFF0D2A80),
+    primaryContainer = Color(0xFF243C74),
     onPrimaryContainer = Color(0xFFFFFFFF),
-    secondary = Color(0xFFA8ACB3),
-    secondaryContainer = Color(0xFF16181C),
+    secondary = Color(0xFFB0BED2),
+    secondaryContainer = Color(0xFF263958),
+    surfaceContainer = Color(0xFF182233),
+    surfaceContainerHighest = Color(0xFF202D42),
     onSecondaryContainer = Color(0xFFFFFFFF),
     tertiary = Color(0xFFA8B8CC),
-    tertiaryContainer = Color(0xFF16181C),
+    tertiaryContainer = Color(0xFF182233),
     onTertiaryContainer = Color(0xFFFFFFFF),
     error = Color(0xFFCF202F),
     onError = Color.White,
-    background = Color(0xFF0A0B0D),
-    surface = Color(0xFF0A0B0D),
+    background = Color(0xFF101725),
+    surface = Color(0xFF101725),
     onSurface = Color.White,
-    surfaceVariant = Color(0xFF16181C),
-    onSurfaceVariant = Color(0xFFA8ACB3),
-    outline = Color(0xFF5B616E),
+    surfaceVariant = Color(0xFF182233),
+    onSurfaceVariant = Color(0xFFB0BED2),
+    outline = Color(0xFF475569),
 )
 
 /**
@@ -210,6 +179,7 @@ fun TVSRideTheme(
         MaterialTheme(
             colorScheme = if (useDark) DarkColors else LightColors,
             typography = AppTypography,
+            shapes = Shapes(medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp)),
             content = content,
         )
     }

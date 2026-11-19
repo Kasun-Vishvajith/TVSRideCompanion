@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
@@ -24,7 +23,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -68,7 +66,6 @@ fun ScanScreen(
     pairing: ScooterPairing,
     lastModelId: String?,
     onPick: (address: String, model: VehicleModel) -> Unit,
-    onBack: () -> Unit,
 ) {
     val state by scanner.state.collectAsStateWithLifecycle()
     val bond by pairing.state.collectAsStateWithLifecycle()
@@ -109,17 +106,14 @@ fun ScanScreen(
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 8.dp),
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-            }
             Column(Modifier.weight(1f)) {
-                Text("Find your scooter", style = MaterialTheme.typography.titleLarge)
+                Text("Connect", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    if (state.scanning) "Scanning — turn the ignition on"
-                    else "Scan stopped",
+                    if (state.scanning) "Looking for nearby vehicles"
+                    else "Choose a vehicle or scan again",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -133,7 +127,7 @@ fun ScanScreen(
 
         Surface(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            shape = RoundedCornerShape(16.dp),
+            shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Row(
@@ -148,7 +142,7 @@ fun ScanScreen(
                     Text(
                         // Kept short on purpose: a three-line wrap runs the
                         // text up against the switch and reads as clipped.
-                        "Turn off if it never appears — flipping rescans",
+                        "Leave off if your vehicle is missing",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -261,7 +255,7 @@ fun ScanScreen(
 private fun PairModeCard(steps: List<String>, bond: BondState) {
     Surface(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.primaryContainer,
     ) {
         Column(Modifier.padding(14.dp)) {
