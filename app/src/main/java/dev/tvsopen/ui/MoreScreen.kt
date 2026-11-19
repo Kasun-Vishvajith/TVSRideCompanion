@@ -814,7 +814,7 @@ private fun RaiderNavigationCard() {
             }
             HorizontalDivider()
             Text("Bike Eco / Power capture", style = MaterialTheme.typography.titleSmall)
-            Text("Automatic mode detection is not verified for Raider. These buttons record what you see on the bike; they do not change its mode. Only mark while safely parked, with tracing on.")
+            Text("Automatic mode detection is not verified for Raider. Captures include byte 8 and byte 11 candidates; neither is a confirmed bike mode. These buttons record what you see on the bike; they do not change its mode. Only mark while safely parked, with tracing on.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(enabled = diagnostic, onClick = {
                     dev.tvsopen.log.RaiderDiagnostics.markBikeMode(dev.tvsopen.log.RaiderDiagnostics.ObservedBikeMode.ECO)

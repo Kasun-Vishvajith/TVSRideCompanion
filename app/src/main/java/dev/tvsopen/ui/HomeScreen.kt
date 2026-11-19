@@ -115,10 +115,7 @@ fun HomeScreen(
         Spacer(Modifier.height(12.dp))
         ConnectCard(connected, connection.state.label, onConnect)
         Spacer(Modifier.height(12.dp))
-        // Ride Mode has to stay reachable. BootReceiver reads
-        // RidePrefs.resumeOnBoot and RidePrefs.rideMode to decide whether to
-        // re-attach after a reboot, so with no toggle the resume path is dead
-        // code that can never fire.
+        // This preference is shared with More and read by BootReceiver.
         RideModeCard(rideMode, onRideModeChange)
 
         Spacer(Modifier.height(20.dp))
@@ -567,16 +564,10 @@ private fun RideModeCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
     ActionCard(
         background = LocalTilePalette.current.neutral,
         icon = Icons.AutoMirrored.Filled.DirectionsBike,
-        title = "Ride Mode",
-        subtitle = if (enabled) "On \u2014 keeps the app active across a reboot"
-        else "Off (auto-enables on ride)",
+        title = "Reconnect after reboot",
+        subtitle = if (enabled) "Reconnect to the saved Raider after the phone restarts"
+        else "Off — enable to reconnect after a phone restart",
         trailing = {
-            // Deliberately NOT gated on `connected`. It used to be, which made
-            // it unreachable in the only state a new install can reach — no
-            // scooter, and no scan screen yet to find one — and BootReceiver
-            // decides the post-reboot resume from RidePrefs.rideMode. A toggle
-            // that cannot be flipped cannot set that flag, so the resume path
-            // was dead code dressed up as reachable UI.
             AppSwitch(checked = enabled, onCheckedChange = onChange)
         },
     )

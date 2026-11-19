@@ -250,7 +250,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         val parked by Session.parked.collectAsStateWithLifecycle()
-        val rideMode by Session.rideMode.collectAsStateWithLifecycle()
+        val rideMode = RidePrefs.load(this@MainActivity).resumeOnBoot
 
         TVSRideTheme(mode = ThemePrefs.mode, darkTheme = isSystemInDarkTheme()) {
             Scaffold(
@@ -335,13 +335,7 @@ class MainActivity : AppCompatActivity() {
                                 )
                             },
                             onRideModeChange = { on ->
-                                // No local copy to assign: `rideMode` above is
-                                // the collected Session flow, so pushing into
-                                // Session and the prefs is the whole update.
-                                // `this@MainActivity` because inside the Scaffold
-                                // content lambda a bare `this` is the BoxScope.
-                                RidePrefs.load(this@MainActivity).updateRideMode(on)
-                                Session.setRideMode(on)
+                                RidePrefs.load(this@MainActivity).updateResumeOnBoot(on)
                             },
                             onOpenOverview = { tab = 2 },
                             onOpenParked = { tab = 2 },
