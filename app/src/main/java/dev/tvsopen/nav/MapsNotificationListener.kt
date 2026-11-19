@@ -49,7 +49,6 @@ class MapsNotificationListener : NotificationListenerService() {
 
     /** Key of the notification that posted the current step, for teardown. */
     @Volatile
-    private var activeNavKey: String? = null
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val n = sbn ?: return

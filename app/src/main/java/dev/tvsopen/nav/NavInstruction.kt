@@ -69,10 +69,10 @@ data class NavInstruction(
      * it still overflows.
      */
     fun metricsLine(maxChars: Int = RowChars.NTORQ_LINE_1, tick: Int = 0): String {
-        val d = if (distanceMeters >= 1000)
+        val d = if (distanceMeters < 0) "" else if (distanceMeters >= 1000)
             "${distanceMeters / 1000}Km ${distanceMeters % 1000}m"
         else "${distanceMeters}m"
-        val raw = if (etaMinutes > 0) "ETA ${etaMinutes}m $d" else d
+        val raw = listOf(if (etaMinutes > 0) "ETA ${etaMinutes}m" else "", d).filter { it.isNotEmpty() }.joinToString(" ")
         return RollingText.window(NavShortCodes.compress(raw), maxChars, tick)
     }
 }
