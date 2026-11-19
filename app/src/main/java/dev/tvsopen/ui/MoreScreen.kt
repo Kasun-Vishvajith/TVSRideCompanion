@@ -401,6 +401,9 @@ fun MoreScreen(
     }
 }
 
+/** An installed app the rider can pick as a navigation source. */
+private data class InstalledApp(val label: String, val packageName: String)
+
 /** Extra maps packages the rider trusts to post turn-by-turn notifications. */
 @Composable
 private fun MapsAllowlistCard() {
@@ -409,29 +412,103 @@ private fun MapsAllowlistCard() {
     var input by remember { mutableStateOf("") }
     var extras by remember { mutableStateOf(prefs.extraMapsPackages) }
 
+    val installed = remember {
+        val pm = ctx.packageManager
+        pm.getInstalledPackages(0)
+            .mapNotNull { info ->
+                val label = runCatching {
+                    info.applicationInfo?.loadLabel(pm)?.toString()
+                }.getOrNull() ?: return@mapNotNull null
+                InstalledApp(label, info.packageName)
+            }
+            .filter { it.packageName != ctx.packageName }
+            .sortedBy { it.label.lowercase() }
+    }
+
+    // Blank query shows the likely maps/navigation apps; typing narrows the
+    // full installed list, so an oddly named app can still be picked.
+    val query = input.trim().lowercase()
+    val hints = listOf("map", "nav", "waze", "osm", "here", "tomtom", "route")
+    val matches = remember(query, installed) {
+        val pool = if (query.isEmpty()) {
+            installed.filter { app ->
+                hints.any { h ->
+                    app.label.lowercase().contains(h) || app.packageName.lowercase().contains(h)
+                }
+            }
+        } else {
+            installed.filter {
+                it.label.lowercase().contains(query) || it.packageName.lowercase().contains(query)
+            }
+        }
+        pool.take(8)
+    }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Extra maps apps", style = MaterialTheme.typography.bodyLarge)
             Text(
-                "Turn-by-turn from these package names is mirrored too. " +
-                    "Only add apps you trust to post navigation notifications.",
+                "Pick an installed app, or type a package name. Only add apps " +
+                    "you trust to post navigation notifications.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
             extras.forEach { pkg ->
+                val label = installed.firstOrNull { it.packageName == pkg }?.label
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(pkg, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.weight(1f)) {
+                        if (label != null) Text(label, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            pkg, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     OutlinedButton(onClick = {
                         extras = extras - pkg
                         prefs.extraMapsPackages = extras
                     }) { Text("Remove") }
                 }
             }
+
+            Text("Installed apps", style = MaterialTheme.typography.bodyMedium)
+            if (matches.isEmpty()) {
+                Text(
+                    if (query.isEmpty()) "No likely maps apps found — type a package name below."
+                    else "No installed app matches — add the package manually below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                matches.forEach { app ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(app.label, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                app.packageName, style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        OutlinedButton(onClick = {
+                            extras = extras + app.packageName
+                            prefs.extraMapsPackages = extras
+                        }) { Text("Add") }
+                    }
+                }
+                if (!query.isEmpty()) {
+                    Text(
+                        "Showing the first ${matches.size} matches.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
-                    label = { Text("Package name") },
+                    label = { Text("Filter apps / package name") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
