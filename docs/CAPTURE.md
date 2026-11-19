@@ -140,6 +140,12 @@ tools/decode-snoop.py   # n/a — this is text, read it directly
 Verified on device 2026-10-12: exported and pulled 98 lines, rotation history
 intact. Prefer this on any phone you cannot root, which is most of them.
 
+The export is redacted: MACs, navigation text, caller/message details and
+parked coordinates are replaced before the copy is written. The live on-device
+log is unchanged, so `run-as ... cat files/logs/tvsride.log` remains the full
+evidence source when you need it. **More → TESTING → Keep screen on** is there
+if the display keeps timing out mid-capture; turn it off again afterwards.
+
 **This has never been run against a real cluster.** Everything the scanner does
 is verified only in that the platform accepts the scan and the UI renders. The
 first question it answers is simply whether the Ntorq advertises the UUID we

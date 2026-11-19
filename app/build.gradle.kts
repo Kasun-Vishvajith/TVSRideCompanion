@@ -37,8 +37,8 @@ android {
         applicationId = "dev.tvsopen"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.2.3-raider4"
+        versionCode = 9
+        versionName = "0.2.6-raider5"
     }
 
     signingConfigs {
@@ -120,6 +120,7 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 }
 
-// CPU budget: see AGENTS.md and gradle.properties — workers.max=2, daemon off.
+// CPU budget: see AGENTS.md — local builds pass --no-daemon --max-workers=2
+// --no-parallel on the command line; gradle.properties is CI-shaped.
 // No extra compiler flags are needed; `-Xjvm-default=all` is the default from
 // Kotlin 2.0 and referencing it here broke the script.

@@ -89,7 +89,7 @@ fun ScanScreen(
     // fallback, so an override is never overwritten by a later discovery.
     val defaultModel = remember(lastModelId) {
         lastModelId?.let { runCatching { VehicleModel.valueOf(it) }.getOrNull() }
-            ?: VehicleModel.NTORQ
+            ?: VehicleModel.NTORQ_125_RACE
     }
     var onlySmartXonnect by remember {
         mutableStateOf(RidePrefs.load(context).onlySmartXonnect)

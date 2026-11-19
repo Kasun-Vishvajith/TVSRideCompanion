@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import dev.tvsopen.log.Log
 import dev.tvsopen.protocol.Gatt
 import dev.tvsopen.protocol.GattConfig
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CompletableDeferred
@@ -446,7 +448,12 @@ class ScooterBleService(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun discoverServices(g: BluetoothGatt): Boolean {
-        val ok = g.discoverServices()
+        val ok = try {
+            g.discoverServices()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "discoverServices refused: ${e.message}")
+            return false
+        }
         if (!ok) Log.w(TAG, "discoverServices refused")
         return ok
     }
@@ -557,6 +564,9 @@ class ScooterBleService(private val context: Context) {
          * enough that a stack which never reports it does not stall the link.
          */
         private const val DISCOVERY_FALLBACK_MS = 2500L
+
+        /** Max wait for the write characteristic after a GATT connect. */
+        private const val WRITE_READY_WAIT_MS = 2_000L
 
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 

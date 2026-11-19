@@ -76,3 +76,7 @@ docs/FORUM_POSTS.md
 /navigation_timeline_redacted.csv
 /raider_frame_fixtures.json
 /verify_fixtures.py
+# Python cache (sim/bridge tools)
+__pycache__/
+*.pyc
+*.pyo

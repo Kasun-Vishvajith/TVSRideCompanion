@@ -225,4 +225,41 @@ class RowWidthTest {
         val loop = full + " - "
         assertEquals(head, step.displayLine(tick = loop.length))
     }
+
+    @Test
+    fun `the maneuver is built for line one and metrics for line two`() {
+        // NavigationBridge passes firstTextRowChars to displayLine and
+        // secondTextRowChars to metricsLine. They were swapped, so the turn
+        // was rolled through a 12-cell window and then clipped on the real
+        // 10-cell line. The widths are a contract, not an implementation detail.
+        val step = NavInstruction(
+            title = "Turn right onto Example Road beyond the junction",
+            street = "Example Road",
+            distanceMeters = 2320,
+            etaMinutes = 3,
+            pictogram = 3,
+            provider = "test",
+        )
+        val maneuver = step.displayLine(RowChars.NTORQ_LINE_1)
+        val metrics = step.metricsLine(RowChars.NTORQ_LINE_2)
+        assertEquals(RowChars.NTORQ_LINE_1, maneuver.length)
+        assertEquals(RowChars.NTORQ_LINE_2, metrics.length)
+        assertTrue("the full distance must fit line 2, got '$metrics'", metrics.contains("2Km"))
+    }
+
+    @Test
+    fun `an unknown distance never reaches the cluster as minus one or zero`() {
+        // "Starting navigation…" has no distance. The control frame has no
+        // unknown value, so the bridge waits; the metrics line must at least
+        // never render the sentinel or invent a zero.
+        val step = NavInstruction(
+            title = "Starting navigation",
+            street = "",
+            distanceMeters = -1,
+            pictogram = null,
+            provider = "test",
+        )
+        assertEquals("", step.metricsLine())
+        assertEquals("ETA 4m", step.copy(etaMinutes = 4).metricsLine())
+    }
 }

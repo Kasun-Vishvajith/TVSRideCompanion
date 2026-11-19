@@ -43,9 +43,13 @@ class MapsNotificationListener : NotificationListenerService() {
     private val _navigating = MutableStateFlow(false)
     val navigating: StateFlow<Boolean> = _navigating.asStateFlow()
 
-    /** Packages to trust in addition to structural detection. */
+    /** Built-in maps apps plus the packages the rider added in More. */
+    private fun allowedPackages(): Set<String> =
+        DEFAULT_MAPS_PACKAGES + RidePrefs.load(applicationContext).extraMapsPackages
+
+    /** Key of the notification that posted the current step, for teardown. */
     @Volatile
-    var allowedPackages: Set<String> = DEFAULT_MAPS_PACKAGES
+    private var activeNavKey: String? = null
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val n = sbn ?: return
@@ -59,7 +63,7 @@ class MapsNotificationListener : NotificationListenerService() {
         val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
         val ongoing = n.isOngoing
 
-        if (pkg in allowedPackages && !_readerStatus.value.mapsNotificationReceived) {
+        if (pkg in allowedPackages() && !_readerStatus.value.mapsNotificationReceived) {
             _readerStatus.value = _readerStatus.value.copy(mapsNotificationReceived = true)
             Log.i(TAG, "maps notification received provider=$pkg (content redacted)")
         }
@@ -71,19 +75,27 @@ class MapsNotificationListener : NotificationListenerService() {
         val ticker = n.notification.tickerText?.toString().orEmpty()
         val parsed = NavParsing.parse(title, text, bigText, subText,
             textLines = lines + listOf(expandedTitle, summary, ticker), iconManeuver = iconKind)
-        if (dev.tvsopen.log.RaiderDiagnostics.enabled && pkg in allowedPackages) {
+        if (dev.tvsopen.log.RaiderDiagnostics.enabled && pkg in allowedPackages()) {
             Log.i(TAG, "nav shape title=${title.isNotBlank()} text=${text.isNotBlank()} " +
                 "expanded=${bigText.isNotBlank()} summary=${subText.isNotBlank()} lines=${lines.size} " +
                 "largeIcon=${n.notification.getLargeIcon() != null} " +
                 "iconDirection=$iconKind semantic=${parsed.direction.kind} source=${parsed.direction.source}")
         }
         val distance = parsed.distanceMeters
+        val category = n.notification?.category
 
-        val looksLikeNav = pkg in allowedPackages ||
-            (extras.containsKey("android.app.extra.MAPS_MODE") ||
-                extras.containsKey("navigation.mode") ||
-                (ongoing && title.isNotEmpty() && (text.isNotEmpty() || bigText.isNotEmpty()) &&
-                    distance >= 0))
+        // Trust known maps packages and explicit navigation extras. For unknown
+        // packages, require CATEGORY_NAVIGATION as well as distance-like content:
+        // the loose "ongoing + has text + distance >= 0" fallback misfires on
+        // non-nav notifications whose text contains time units that look like
+        // metres (e.g. a system charging notification "1 h 13 m until full"
+        // parses "13 m" as 13 metres and was mirrored as a turn).
+        val hasNavExtras = extras.containsKey("android.app.extra.MAPS_MODE") ||
+            extras.containsKey("navigation.mode")
+        val looksLikeNav = pkg in allowedPackages() || hasNavExtras ||
+            (ongoing && category == Notification.CATEGORY_NAVIGATION &&
+                title.isNotEmpty() && (text.isNotEmpty() || bigText.isNotEmpty()) &&
+                distance >= 0)
 
         if (looksLikeNav) {
             postNav(n.key, pkg, parsed)
@@ -91,7 +103,6 @@ class MapsNotificationListener : NotificationListenerService() {
         }
 
         val prefs = RidePrefs.load(this)
-        val category = n.notification?.category
         val isCall = category == Notification.CATEGORY_CALL ||
             extras.containsKey("android.telecom.extra.INCOMING_CALL_EXTRAS") ||
             extras.containsKey("android.telecom.extra.INCOMING_CALL_ADDRESS")
@@ -121,7 +132,7 @@ class MapsNotificationListener : NotificationListenerService() {
         // Package membership alone also matches Maps downloads and summaries.
         if ((parsed.distanceMeters < 0 && parsed.pictogram == null) ||
             (parsed.maneuver.isBlank() && parsed.street.isBlank())) {
-            if (pkg in allowedPackages && !unreadableGuidanceLogged) {
+            if (pkg in allowedPackages() && !unreadableGuidanceLogged) {
                 unreadableGuidanceLogged = true
                 Log.i(TAG, "maps notification has no readable guidance provider=$pkg " +
                     "distanceKnown=${parsed.distanceMeters >= 0} directionKnown=${parsed.pictogram != null} " +
@@ -266,7 +277,7 @@ class MapsNotificationListener : NotificationListenerService() {
             // A callback can be missed during listener handover. Re-read only
             // ongoing Maps guidance before deciding the route actually ended.
             val active = runCatching { activeNotifications?.toList().orEmpty() }.getOrDefault(emptyList())
-            active.filter { it.packageName in allowedPackages && it.isOngoing }
+            active.filter { it.packageName in allowedPackages() && it.isOngoing }
                 .forEach { onNotificationPosted(it) }
             if (!lifecycle.expire(generation)) return@Runnable
             Log.i(TAG, "navigation ended t=${android.os.SystemClock.elapsedRealtime()} generation=$generation")

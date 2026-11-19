@@ -30,6 +30,8 @@ import androidx.compose.material3.Surface
 import dev.tvsopen.ui.theme.AppSwitch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +51,7 @@ import dev.tvsopen.transport.ConnectionState
 import dev.tvsopen.transport.label
 import dev.tvsopen.ui.theme.LocalTilePalette
 import dev.tvsopen.ui.theme.NumberStyle
+import kotlinx.coroutines.delay
 
 /**
  * Dashboard.
@@ -328,8 +331,8 @@ private fun MirrorNavCard(enabled: Boolean, hud: HudState, onChange: (Boolean) -
 
 @Composable
 private fun LastParkedCard(parked: ParkedInfo?, onClick: () -> Unit = {}) {
-    // Recomputed only when the record changes, not on every recomposition.
-    val ago = remember(parked) {
+    val tick = rememberTicker()
+    val ago = remember(parked, tick) {
         parked?.let { relativeTime(System.currentTimeMillis() - it.atMillis) }
     }
     val clickable = parked?.label?.split(",")?.mapNotNull { it.trim().toDoubleOrNull() }?.size == 2
@@ -443,6 +446,23 @@ private fun ActionCard(
 }
 
 /**
+ * A 1 Hz tick so age labels keep advancing while no flow emits. A `remember`
+ * keyed only on a timestamp froze "Telemetry live" on screen forever after a
+ * link died, because no more frames arrived to change the key.
+ */
+@Composable
+private fun rememberTicker(): Long {
+    val tick = remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000)
+            tick.value++
+        }
+    }
+    return tick.value
+}
+
+/**
  * Telemetry freshness.
  *
  * The single most useful "is this thing actually working" signal. Dashboards
@@ -451,7 +471,8 @@ private fun ActionCard(
  */
 @Composable
 private fun LinkCard(telemetry: Telemetry) {
-    val age = remember(telemetry.lastFrameAt) {
+    val tick = rememberTicker()
+    val age = remember(telemetry.lastFrameAt, tick) {
         if (telemetry.lastFrameAt == 0L) null
         else System.currentTimeMillis() - telemetry.lastFrameAt
     }

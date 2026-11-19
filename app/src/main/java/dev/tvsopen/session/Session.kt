@@ -230,8 +230,11 @@ object Session {
     private fun trackRideDistance() {
         val log = rideLog ?: return
         // connectedDistanceKm() is a Telemetry member, not a Session one, so the
-        // receiver has to be spelled out.
-        log.update(_telemetry.value.connectedDistanceKm() ?: 0.0)
+        // receiver has to be spelled out. It is null when the odometer went
+        // backwards (cluster reset/swap); substituting 0.0 here used to wipe
+        // the whole open ride when finish() folded it into the totals.
+        val distance = _telemetry.value.connectedDistanceKm() ?: return
+        log.update(distance)
         _rides.value = log.rides.value
     }
 

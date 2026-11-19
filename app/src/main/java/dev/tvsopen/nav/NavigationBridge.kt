@@ -174,9 +174,9 @@ class NavigationBridge(
                     val tick = if (static) 0 else
                         ((cycleStarted - instructionStarted).coerceAtLeast(0) / controlIntervalMs.coerceAtLeast(1)).toInt()
                     val nav = step.toNavStep()
-                    val street = step.displayLine(secondTextRowChars, tick)
+                    val street = step.displayLine(if (driver.model == VehicleModel.RAIDER_125) secondTextRowChars else firstTextRowChars, tick)
                     val metrics = if (driver.model == VehicleModel.RAIDER_125)
-                        step.tripLine(firstTextRowChars, tick) else step.metricsLine(firstTextRowChars, tick)
+                        step.tripLine(firstTextRowChars, tick) else step.metricsLine(secondTextRowChars, tick)
                     val secondary = if (safe) null else driver.buildNavTextSecondary(nav.copy(streetName = metrics))
                     val control = nav.copy(rows = if (secondary != null && metrics.isNotBlank()) 2 else 1)
                     val time = now()

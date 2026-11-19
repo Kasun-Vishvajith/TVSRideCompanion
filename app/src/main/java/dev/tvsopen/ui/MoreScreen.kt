@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import dev.tvsopen.ui.theme.AppSwitch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
@@ -57,7 +62,9 @@ import dev.tvsopen.ui.theme.ThemePrefs
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /**
@@ -75,6 +82,8 @@ fun MoreScreen(
     totalRides: Int,
     totalRideDistanceKm: Double,
     onRiderNameChange: (String?) -> Unit,
+    keepScreenOn: Boolean,
+    onKeepScreenOnChange: (Boolean) -> Unit,
     notificationAccessGranted: Boolean,
     onOpenNotificationAccess: () -> Unit,
     onScan: () -> Unit,
@@ -249,6 +258,16 @@ fun MoreScreen(
             }
         }
 
+        item { MapsAllowlistCard() }
+
+        item {
+            Text("TESTING", style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        item { KeepScreenOnCard(enabled = keepScreenOn, onChange = onKeepScreenOnChange) }
+
         item {
             Text("ALERTS", style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
@@ -330,6 +349,210 @@ fun MoreScreen(
         }
 
         item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+/** An installed app the rider can pick as a navigation source. */
+private data class InstalledApp(val label: String, val packageName: String)
+
+/** Compact entry point; the heavy picker only opens on demand. */
+@Composable
+private fun MapsAllowlistCard() {
+    val ctx = LocalContext.current
+    val prefs = RidePrefs.load(ctx)
+    var extras by remember { mutableStateOf(prefs.extraMapsPackages) }
+    var open by remember { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Extra maps apps", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (extras.isEmpty())
+                    "None added. Built-in maps apps are still mirrored."
+                else "Added: ${extras.joinToString(", ")}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { open = true }) { Text("Manage") }
+        }
+    }
+
+    if (open) {
+        MapsPickerDialog(
+            current = extras,
+            onAdd = { pkg ->
+                extras = extras + pkg
+                prefs.extraMapsPackages = extras
+            },
+            onRemove = { pkg ->
+                extras = extras - pkg
+                prefs.extraMapsPackages = extras
+            },
+            onDismiss = { open = false },
+        )
+    }
+}
+
+/** On-demand picker. Package enumeration is I/O and runs off the main thread. */
+@Composable
+private fun MapsPickerDialog(
+    current: Set<String>,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    var installed by remember { mutableStateOf<List<InstalledApp>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var input by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        val apps = withContext(Dispatchers.IO) {
+            val pm = ctx.packageManager
+            pm.getInstalledPackages(0)
+                .mapNotNull { info ->
+                    val label = runCatching {
+                        info.applicationInfo?.loadLabel(pm)?.toString()
+                    }.getOrNull() ?: return@mapNotNull null
+                    InstalledApp(label, info.packageName)
+                }
+                .filter { it.packageName != ctx.packageName }
+                .sortedBy { it.label.lowercase() }
+        }
+        installed = apps
+        loading = false
+    }
+
+    val query = input.trim().lowercase()
+    val hints = listOf("map", "nav", "waze", "osm", "here", "tomtom", "route")
+    val matches = remember(query, installed) {
+        val pool = if (query.isEmpty()) {
+            installed.filter { app ->
+                val text = "${app.label} ${app.packageName}".lowercase()
+                // "nav" also matches Android's own "Navigation Bar" system
+                // components; they cannot post a turn-by-turn notification.
+                !app.packageName.startsWith("com.android.internal") &&
+                    !text.contains("navigation bar") &&
+                    !text.contains("navbar") &&
+                    hints.any { h -> text.contains(h) }
+            }
+        } else {
+            installed.filter {
+                it.label.lowercase().contains(query) || it.packageName.lowercase().contains(query)
+            }
+        }
+        pool.take(8)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Extra maps apps") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Added", style = MaterialTheme.typography.bodyMedium)
+                if (current.isEmpty()) {
+                    Text(
+                        "None yet.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    current.forEach { pkg ->
+                        val label = installed.firstOrNull { it.packageName == pkg }?.label
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                if (label != null) {
+                                    Text(label, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text(
+                                    pkg, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            OutlinedButton(onClick = { onRemove(pkg) }) { Text("Remove") }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+                Text("Installed apps", style = MaterialTheme.typography.bodyMedium)
+                when {
+                    loading -> Text(
+                        "Loading installed apps…", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    matches.isEmpty() -> Text(
+                        if (query.isEmpty()) "No likely maps apps found — type a package name below."
+                        else "No installed app matches — add the package manually below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    else -> {
+                        matches.forEach { app ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(app.label, style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        app.packageName, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                OutlinedButton(onClick = { onAdd(app.packageName) }) { Text("Add") }
+                            }
+                        }
+                        if (query.isNotEmpty()) {
+                            Text(
+                                "Showing the first ${matches.size} matches.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        label = { Text("Filter apps / package name") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    Button(onClick = {
+                        val pkg = input.trim()
+                        if (pkg.isNotEmpty()) {
+                            onAdd(pkg)
+                            input = ""
+                        }
+                    }) { Text("Add") }
+                }
+            }
+        },
+        confirmButton = { OutlinedButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Testing aid: keeps the screen awake while the app is open. */
+@Composable
+private fun KeepScreenOnCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Keep screen on", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "For testing only. The screen stays awake while this app is " +
+                            "open, which uses more battery.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AppSwitch(checked = enabled, onCheckedChange = onChange)
+            }
+        }
     }
 }
 

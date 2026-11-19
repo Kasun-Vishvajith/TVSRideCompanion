@@ -130,8 +130,10 @@ object ManeuverResolver {
 
     private val rules: List<Pair<Regex, Int>> = listOf(
         Regex("u[- ]?turn|make a u", RegexOption.IGNORE_CASE) to Pictograms.U_TURN_LEGACY.id,
-        Regex("\\broundabout\\b", RegexOption.IGNORE_CASE) to 68,
+        // More specific first: the generic roundabout rule below also matches
+        // "second exit at the roundabout", which made this rule unreachable.
         Regex("\\bexit\\b.*\\broundabout\\b|\\bfirst exit\\b", RegexOption.IGNORE_CASE) to 65,
+        Regex("\\broundabout\\b", RegexOption.IGNORE_CASE) to 68,
         Regex("\\bsharp left\\b", RegexOption.IGNORE_CASE) to 1,
         Regex("\\bslight left\\b|\\bkeep left\\b", RegexOption.IGNORE_CASE) to 2,
         Regex("\\bsharp right\\b", RegexOption.IGNORE_CASE) to 4,

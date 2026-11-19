@@ -26,8 +26,13 @@ say() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 # Signals that a BLE peripheral is attached. Any one is enough; a bonded-device
 # count increase is the strongest, the others are fallbacks for builds that
 # report an active-but-unbonded link.
+# grep -c always prints a number, even when it finds nothing — and then exits
+# 1, which with pipefail makes the whole pipeline fail. Use `|| true`, not
+# `|| echo 0`: the latter appends a second "0" and turns the value into
+# "0\n0", which breaks the `-gt` comparison below ("integer expression
+# expected") and silently disables bonded-count detection.
 baseline_bonded=$("$ADB" shell settings get secure bluetooth_bonded_devices 2>/dev/null \
-  | tr -d '\r' | tr ';' '\n' | grep -c '[A-Fa-f0-9]' || echo 0)
+  | tr -d '\r' | tr ';' '\n' | grep -c '[A-Fa-f0-9]' || true)
 say "baseline bonded devices: $baseline_bonded"
 
 say "waiting up to ${TIMEOUT}s — open TVS Connect and connect to the scooter"
@@ -35,7 +40,7 @@ waited=0
 connected=0
 while [ "$waited" -lt "$TIMEOUT" ]; do
   now_bonded=$("$ADB" shell settings get secure bluetooth_bonded_devices 2>/dev/null \
-    | tr -d '\r' | tr ';' '\n' | grep -c '[A-Fa-f0-9]' || echo 0)
+    | tr -d '\r' | tr ';' '\n' | grep -c '[A-Fa-f0-9]' || true)
 
   # A TVS-named peripheral showing up at all is a strong signal.
   if "$ADB" shell dumpsys bluetooth_manager 2>/dev/null \

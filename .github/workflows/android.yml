@@ -5,7 +5,7 @@ name: Android
 # version you actually want to download.
 on:
   push:
-    branches: [master]
+    branches: [master, feature/raider-srilanka]
     tags: ['v*']
   pull_request:
   workflow_dispatch:

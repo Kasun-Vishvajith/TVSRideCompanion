@@ -79,7 +79,9 @@ enum class VehicleModel(
         fun detect(name: String?): VehicleModel {
             val n = name?.uppercase() ?: return UNKNOWN
             return when {
-                n.contains("NTORQ") -> NTORQ
+                // The rider's own cluster is the 125. Name-only detection had
+                // been naming it "Ntorq 150 (SX)" since before the 125 existed.
+                n.contains("NTORQ") -> NTORQ_125_RACE
                 n.contains("JUPITER") -> JUPITER_125
                 n.contains("APACHE") -> APACHE_160
                 n.contains("RAIDER") -> RAIDER_125

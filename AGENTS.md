@@ -437,8 +437,11 @@ accounts and cloud APIs are explicitly **out of scope** — see `docs/SCOPE.md`.
 - Never use the published CVEs. They are background reading, not a design input.
 - Do not redistribute the official APK. It stays in the parent folder, outside
   this repo, referenced only by SHA-256.
-- No `INTERNET` permission. The no-account property is enforced by the build and
-  must stay enforced — verify it in the merged manifest after changing deps.
+- `INTERNET` **is** declared deliberately for embedded OpenStreetMap tiles,
+  place search and routing (`docs/MAPS.md`). The no-account property is now
+  enforced by code: network call sites live only in `dev.tvsopen.nav.maps`,
+  and the app still talks to no TVS server and needs no account. Do not remove
+  the permission — CI asserts it is present in the merged manifest.
 
 ## Code review gotchas seen in this repo
 
@@ -520,9 +523,10 @@ All of these cost a real build cycle. Check for them before blaming the toolchai
 
 Two checks run in CI that are worth not breaking:
 
-- **No `android.permission.INTERNET` in the merged manifest.** This is the
-  mechanism behind "no account, no cloud". A transitive dependency could add it,
-  so assert it rather than trust review.
+- **`android.permission.INTERNET` must be present in the merged manifest.**
+  Embedded maps need it; CI asserts it so a dependency change cannot silently
+  drop it. The "no TVS contact" guarantee is a code property (network calls
+  only in `dev.tvsopen.nav.maps`), not a manifest rule.
 - `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT` and `POST_NOTIFICATIONS` must be present.
 
 ## Layout

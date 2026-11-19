@@ -48,9 +48,10 @@ object DataExport {
         if (parked != null) {
             root.put(
                 "parked",
+                // The label is the raw parked latitude/longitude. An export is
+                // shareable, so coordinates are deliberately left out.
                 JSONObject()
-                    .put("atMillis", parked.atMillis)
-                    .put("label", parked.label ?: JSONObject.NULL),
+                    .put("atMillis", parked.atMillis),
             )
         } else {
             root.put("parked", JSONObject.NULL)

@@ -37,93 +37,28 @@ data class ParsedNav(
     val direction: ManeuverReading = ManeuverReading(ManeuverKind.UNKNOWN, ManeuverSource.NONE),
 )
 
-/**
- * What kind of notification this is, for the cluster.
- *
- * The Ntorq 125 shows navigation, caller ID and SMS in the same display
- * regions, so the app has to know which it is looking at rather than treating
- * everything as a turn-by-turn step.
- */
-enum class ClusterNotice { NAVIGATION, INCOMING_CALL, MESSAGE, MEDIA }
-
-/** Which maps app mode is producing the navigation. */
-enum class NavMode { DRIVING, TWO_WHEELER, UNKNOWN }
-
-/**
- * Classify a notification by package and extras.
- *
- * **Structural, not a package list.** Dialers and messaging apps are
- * effectively unbounded in number and none of them share a documented extras
- * contract, so keying on a list of packages would work only for the few
- * installed today. The classification keys on what the platform guarantees:
- * the call extras, and the messaging `MessagingStyle` extras.
- *
- * Car vs bike is also structural. Google Maps sets
- * `EXTRA_NAVIGATION_MODE` to 2 for two-wheeler and 1 for driving, in both
- * modes — so a bike route is detected from the same notification as a car
- * route and needs no separate handling.
- */
-fun classify(
-    extras: android.os.Bundle,
-    isMapsPackage: Boolean,
-): Pair<ClusterNotice, NavMode> {
-    // Incoming call first: a dialer's notification is ongoing with a title and
-    // text, so without this it is misread as navigation.
-    //
-    // Keyed on the literals, not on `Notification` constants, because the ones
-    // that would fit are not public API — `EXTRA_INCOMING_CALL_NUMBER` and
-    // friends do not resolve against the SDK, and Telecom uses these string
-    // keys on the notification it posts for an incoming call.
-    if (extras.containsKey(EXTRA_INCOMING_CALL_EXTRAS) ||
-        extras.containsKey(EXTRA_INCOMING_CALL_ADDRESS)
-    ) {
-        return ClusterNotice.INCOMING_CALL to NavMode.UNKNOWN
-    }
-    if (isMapsPackage) {
-        return ClusterNotice.NAVIGATION to readNavMode(extras)
-    }
-    // MessagingStyle is what a messaging app sets for a conversation, and is
-    // the only reliable way to tell a message from a random app notification.
-    // Read as Parcelable rather than cast: MessagingStyle is not reified from
-    // a Bundle generically and the cast does not typecheck.
-    @Suppress("DEPRECATION")
-    if (extras.getParcelable<android.os.Parcelable>(EXTRA_MESSAGING_STYLE) != null) {
-        return ClusterNotice.MESSAGE to NavMode.UNKNOWN
-    }
-    return ClusterNotice.MEDIA to NavMode.UNKNOWN
-}
-
-/**
- * Driving or two-wheeler, from the maps app's own extra.
- *
- * **Unverified.** This key is community-documented rather than public API, and
- * has not yet been observed on the device. It is read defensively and is
- * informational only — nothing gates on it, because the navigation content is
- * mode-independent: the instruction, street and distance arrive in the same
- * title/text/sub fields whether Maps is routing a car or a bike, so mirroring
- * works in both modes regardless of what this returns.
- */
-private fun readNavMode(extras: android.os.Bundle): NavMode {
-    val raw = extras.get(EXTRA_NAVIGATION_MODE)
-    val n = when (raw) {
-        is Int -> raw
-        // Maps has shipped this as both an int and a string across versions.
-        is String -> raw.toIntOrNull()
-        else -> null
-    } ?: return NavMode.UNKNOWN
-    return when (n) {
-        1 -> NavMode.DRIVING
-        2 -> NavMode.TWO_WHEELER
-        else -> NavMode.UNKNOWN
-    }
-}
-
-private const val EXTRA_INCOMING_CALL_EXTRAS = "android.telecom.extra.INCOMING_CALL_EXTRAS"
-private const val EXTRA_INCOMING_CALL_ADDRESS = "android.telecom.extra.INCOMING_CALL_ADDRESS"
-private const val EXTRA_MESSAGING_STYLE = "android.messaging.style"
-private const val EXTRA_NAVIGATION_MODE = "navigation.mode"
+// Notification classification lives in MapsNotificationListener, which owns the
+// listener lifecycle. The former classify() helpers were unused, read a
+// non-existent MessagingStyle key, and their nav branch would have reintroduced
+// the false positives the listener now guards against.
 
 object NavParsing {
+
+    /**
+     * `1,000 m` is a thousands separator, `2,3 km` a decimal comma. Treat a
+     * comma followed by exactly three digits (and no decimal point) as
+     * thousands; everything else keeps the European decimal-comma reading.
+     * Without this, "1,000 m" parsed as 1 m — a 1000x error.
+     */
+    private fun parseNumber(raw: String): Double? {
+        val normalised = if (',' in raw && '.' !in raw &&
+            raw.substringAfter(',').length == 3) {
+            raw.replace(",", "")
+        } else {
+            raw.replace(',', '.')
+        }
+        return normalised.toDoubleOrNull()
+    }
 
     /**
      * `150 m`, `1.5 km`, `850m`, `2,3 km` — providers vary on punctuation.
@@ -215,7 +150,8 @@ object NavParsing {
             if (number.contains(',') && number.contains('.')) {
                 val decimal = if (number.lastIndexOf(',') > number.lastIndexOf('.')) ',' else '.'
                 number = number.replace(if (decimal == ',') "." else ",", "").replace(',', '.')
-            } else number = number.replace(',', '.')
+            } else if (',' in number && number.substringAfter(',').length == 3) number = number.replace(",", "")
+            else number = number.replace(',', '.')
             val value = number.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 } ?: continue
             return when (m.groupValues[2].lowercase()) {
                 "km" -> (value * 1000).toInt()

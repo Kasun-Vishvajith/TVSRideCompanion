@@ -71,6 +71,22 @@ earlier build logged a dropped write every two seconds for as long as the link
 was down, which was 28% of every log file — the same failure hiding in the
 evidence as in the display.
 
+**Exports are redacted.** MAC addresses, navigation text, caller/message details
+and parked coordinates are stripped before writing the bundle, so a shared log
+is not a route and a contact list. The on-device log keeps the full detail for
+debugging; only the export is cleaned.
+
+### Navigation sources and testing
+
+The built-in maps-app list covers the common providers. **More → Extra maps
+apps** lets you add another by package name; only add apps you trust to post
+navigation notifications. If the system kills the notification listener, the
+app asks to be rebound so mirroring recovers without a restart.
+
+**More → TESTING → Keep screen on** holds a wake lock at the window level while
+the app is open. It is off by default and is meant for capture and debugging —
+it costs battery, so turn it off again afterwards.
+
 ## Download
 
 - **Debug APK (every push/PR):** open the latest successful [Android Actions run](https://github.com/athulkrishna2015/TVSRideCompanion/actions/workflows/android.yml), download the **`app-debug`** artifact, and install `app-debug.apk` (`adb install -r app-debug.apk`). This is the debug-signed build used for development and `run-as` log access.

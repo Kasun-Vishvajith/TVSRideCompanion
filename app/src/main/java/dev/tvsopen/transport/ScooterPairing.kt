@@ -75,7 +75,8 @@ class ScooterPairing(private val context: Context) {
             val device = intent.getParcelableExtra<BluetoothDevice>(
                 BluetoothDevice.EXTRA_DEVICE,
             ) ?: return
-            when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)) {
+            val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+            when (state) {
                 BluetoothDevice.BOND_BONDING -> {
                     Log.i(TAG, "bonding with ${device.address}")
                     _state.value = BondState.Pairing
@@ -88,6 +89,14 @@ class ScooterPairing(private val context: Context) {
 
                 else -> {
                     val reason = intent.getIntExtra(EXTRA_REASON, BluetoothDevice.ERROR)
+                    if (state == BluetoothDevice.BOND_NONE &&
+                        (reason == BluetoothDevice.ERROR || reason == 0)) {
+                        // BOND_NONE with no reason is the normal idle/unpair
+                        // result, not a failed pairing attempt.
+                        Log.i(TAG, "bond cleared for ${device.address}")
+                        _state.value = BondState.Idle
+                        return
+                    }
                     Log.w(TAG, "bond failed with ${device.address}, reason=$reason")
                     _state.value = BondState.Failed(device.address, describeReason(reason))
                 }

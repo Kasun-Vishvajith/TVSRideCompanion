@@ -256,6 +256,29 @@ object Log {
      * permission and is readable by `adb pull` without root — the point being
      * that logs should be gettable off a phone you cannot root.
      */
+    private val MAC_RE = Regex("""\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b""")
+
+    /**
+     * The log records nav maneuver text verbatim, caller numbers and the
+     * cluster MAC. An unredacted export is a route and a contact list, so
+     * strip those before writing a shareable bundle.
+     */
+    private fun redact(line: String): String {
+        var out = MAC_RE.replace(line, "[MAC]")
+        if ("nav from " in out) {
+            out = out.substringBefore("nav from ") + "nav from [REDACTED]"
+        }
+        val marker = when {
+            "call from " in out -> "call from "
+            "call alert:" in out -> "call alert:"
+            "message alert:" in out -> "message alert:"
+            "parked spot saved:" in out -> "parked spot saved:"
+            else -> null
+        }
+        if (marker != null) out = out.substringBefore(marker) + marker + "[REDACTED]"
+        return out
+    }
+
     fun export(dir: File): File? {
         val source = logFile() ?: return null
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
@@ -264,17 +287,21 @@ object Log {
         return runCatching {
             if (!dir.exists()) dir.mkdirs()
             fileSizeBytes() // flush before copying
-            out.bufferedWriter().use { w ->
-                (2..FILE_KEEP)
-                    .map { File(source.parentFile, "tvsride.$it.log") }
-                    .filter { it.exists() }
-                    .sortedByDescending { it.name }
-                    .forEach { f ->
-                        w.write("===== ${f.name} (older) =====\n")
-                        f.forEachLine { w.write("${DiagnosticRedaction.redact(it)}\n") }
-                    }
-                w.write("===== ${source.name} (current) =====\n")
-                source.forEachLine { w.write("${DiagnosticRedaction.redact(it)}\n") }
+            // Hold the lock across the copy: a concurrent frame must not rotate
+            // the files out from under us and produce a truncated bundle.
+            synchronized(lock) {
+                out.bufferedWriter().use { w ->
+                    (2..FILE_KEEP)
+                        .map { File(source.parentFile, "tvsride.$it.log") }
+                        .filter { it.exists() }
+                        .sortedByDescending { it.name }
+                        .forEach { f ->
+                            w.write("===== ${f.name} (older) =====\n")
+                            f.forEachLine { w.write("${redact(DiagnosticRedaction.redact(it))}\n") }
+                        }
+                    w.write("===== ${source.name} (current) =====\n")
+                    source.forEachLine { w.write("${redact(DiagnosticRedaction.redact(it))}\n") }
+                }
             }
             out
         }.getOrNull()
@@ -291,6 +318,11 @@ object Log {
             // Payloads seen before the clear must not suppress the first dumps
             // after it, or clearing the log would still open mid-stream.
             frameCounts.clear()
+            // The pacing gates must go too: their lastBytes/lastEmitAt belong
+            // to the pre-clear stream. Keeping them suppresses the first frames
+            // after Clear and prefixes them with a (+N more) from before it.
+            frameGates.clear()
+            lastPublishAt = 0L
             _records.value = emptyList()
             _frameCount.value = 0L
         }
@@ -393,7 +425,11 @@ object Log {
      * and in the file.
      */
     fun frame(direction: String, bytes: ByteArray, atMillis: Long = System.currentTimeMillis()) {
-        _frameCount.value = _frameCount.value + 1
+        // Read-modify-write on a StateFlow: without the lock, concurrent BLE
+        // callback threads lose increments and the displayed total undercounts.
+        synchronized(lock) {
+            _frameCount.value = _frameCount.value + 1
+        }
         if (!captureFrames) return
         // contentHashCode compares content, not identity, so this is a genuine
         // payload test; a collision would only merge two already-identical lines.
