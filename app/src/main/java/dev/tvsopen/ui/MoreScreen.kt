@@ -432,9 +432,13 @@ private fun MapsAllowlistCard() {
     val matches = remember(query, installed) {
         val pool = if (query.isEmpty()) {
             installed.filter { app ->
-                hints.any { h ->
-                    app.label.lowercase().contains(h) || app.packageName.lowercase().contains(h)
-                }
+                val text = "${app.label} ${app.packageName}".lowercase()
+                // "nav" also matches Android's own "Navigation Bar" system
+                // components; they cannot post a turn-by-turn notification.
+                !app.packageName.startsWith("com.android.internal") &&
+                    !text.contains("navigation bar") &&
+                    !text.contains("navbar") &&
+                    hints.any { h -> text.contains(h) }
             }
         } else {
             installed.filter {
