@@ -96,6 +96,7 @@ class ScooterBleService(private val context: Context) {
         val sequence: Long, val result: CompletableDeferred<Int>)
     @Volatile private var pendingWrite: PendingWrite? = null
     private var cccdFailed = false
+    @Volatile private var setupCompleted = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -127,7 +128,6 @@ class ScooterBleService(private val context: Context) {
     @Synchronized
     @SuppressLint("MissingPermission")
     fun connect(address: String, config: GattConfig = GattConfig.DEFAULT): Boolean {
-        if (gatt != null) return false
         val a = adapter ?: return false
         val device: BluetoothDevice = try {
             a.getRemoteDevice(address)
@@ -135,14 +135,37 @@ class ScooterBleService(private val context: Context) {
             Log.w(TAG, "invalid cluster address")
             return false
         }
+        gatt?.let { previous ->
+            if (isReady) return false
+            // A new user request must be able to replace an unfinished or
+            // write-stalled link, even if Android never delivered a callback.
+            Log.w(TAG, "replacing unfinished GATT connection=$connectionGeneration")
+            closeGatt(previous)
+        }
         _state.value = ConnectionState.CONNECTING
         connectionGeneration++
 
-        gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val client = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             device.connectGatt(context, config.autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
             device.connectGatt(context, config.autoConnect, gattCallback)
         }
+        gatt = client
+        if (client == null) {
+            _state.value = ConnectionState.DISCONNECTED
+            return false
+        }
+        // Bound the entire setup, including service discovery and CCCDs.
+        // Some Android failures deliver neither success nor disconnection.
+        mainHandler.postDelayed({
+            synchronized(this@ScooterBleService) {
+                if (gatt === client && !setupCompleted) {
+                    Log.w(TAG, "GATT setup timed out connection=$connectionGeneration; releasing client")
+                    closeGatt(client)
+                    _state.value = ConnectionState.DISCONNECTED
+                }
+            }
+        }, CONNECT_SETUP_TIMEOUT_MS)
         return true
     }
 
@@ -173,6 +196,7 @@ class ScooterBleService(private val context: Context) {
      * identity check matters — a stale callback must not clear a newer client.
      */
     @SuppressLint("MissingPermission")
+    @Synchronized
     private fun closeGatt(g: BluetoothGatt) {
         if (gatt === g) {
             _ready.value = false
@@ -182,7 +206,9 @@ class ScooterBleService(private val context: Context) {
             mainHandler.removeCallbacksAndMessages(null)
             gatt = null
             discoveryStarted = false
+            setupCompleted = false
         }
+        runCatching { g.disconnect() }
         runCatching { g.close() }
             .onFailure { Log.w(TAG, "gatt close: ${it.message}") }
     }
@@ -284,39 +310,41 @@ class ScooterBleService(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-            if (g !== gatt) return
-            when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    Log.i(TAG, "GATT connected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
-                    _state.value = ConnectionState.CONNECTED
-                    try {
-                        // Discovery must NOT be issued while the MTU exchange is
-                        // in flight: the stack answers it with BUSY and
-                        // `onServicesDiscovered` is then never called, so the
-                        // link sits "connected" with no write characteristic
-                        // forever. This was invisible on the Ntorq and showed up
-                        // on the first peripheral that took the MTU seriously.
-                        if (g.requestMtu(Gatt.REQUESTED_MTU)) {
-                            mainHandler.postDelayed(
-                                { startDiscovery(g) },
-                                DISCOVERY_FALLBACK_MS,
-                            )
-                        } else {
-                            startDiscovery(g)
+            synchronized(this@ScooterBleService) {
+                if (g !== gatt) return
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        Log.i(TAG, "GATT connected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
+                        _state.value = ConnectionState.CONNECTED
+                        try {
+                            // Discovery must NOT be issued while the MTU exchange is
+                            // in flight: the stack answers it with BUSY and
+                            // `onServicesDiscovered` is then never called, so the
+                            // link sits "connected" with no write characteristic
+                            // forever. This was invisible on the Ntorq and showed up
+                            // on the first peripheral that took the MTU seriously.
+                            if (g.requestMtu(Gatt.REQUESTED_MTU)) {
+                                mainHandler.postDelayed(
+                                    { startDiscovery(g) },
+                                    DISCOVERY_FALLBACK_MS,
+                                )
+                            } else {
+                                startDiscovery(g)
+                            }
+                        } catch (e: SecurityException) {
+                            Log.e(TAG, "post-connect setup refused: ${e.message}")
                         }
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "post-connect setup refused: ${e.message}")
                     }
-                }
 
-                BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.w(TAG, "GATT disconnected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
-                    _state.value = ConnectionState.DISCONNECTED
-                    // Must release the client here, not just clear the
-                    // characteristic: `connect()` bails out while `gatt` is
-                    // non-null, so leaving a dead client in place made every
-                    // subsequent reconnect a silent no-op. See [closeGatt].
-                    closeGatt(g)
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        Log.w(TAG, "GATT disconnected connection=$connectionGeneration t=${android.os.SystemClock.elapsedRealtime()} (status=$status)")
+                        // Must release the client here, not just clear the
+                        // characteristic: `connect()` bails out while `gatt` is
+                        // non-null, so leaving a dead client in place made every
+                        // subsequent reconnect a silent no-op. See [closeGatt].
+                        closeGatt(g)
+                        _state.value = ConnectionState.DISCONNECTED
+                    }
                 }
             }
         }
@@ -407,12 +435,14 @@ class ScooterBleService(private val context: Context) {
     private val cccdLock = Any()
 
     @SuppressLint("MissingPermission")
+    @Synchronized
     private fun writeNextCccd(g: BluetoothGatt) {
         if (g !== gatt) return
         val next = synchronized(cccdLock) {
             if (cccdQueue.isNotEmpty()) cccdQueue.removeFirst() else null
         } ?: run {
             _ready.value = !cccdFailed
+            setupCompleted = isReady
             Log.i(TAG, "BLE ready t=${android.os.SystemClock.elapsedRealtime()} ready=$isReady")
             return
         }
@@ -556,6 +586,7 @@ class ScooterBleService(private val context: Context) {
     companion object {
         private const val TAG = "ScooterBle"
         private const val WRITE_TIMEOUT_MS = 2_000L
+        private const val CONNECT_SETUP_TIMEOUT_MS = 45_000L
 
         /**
          * How long to wait for `onMtuChanged` before starting discovery anyway.
