@@ -59,6 +59,8 @@ class MainActivity : Activity() {
     private var context = "No test selected"
     private var exportRunning = false
     private var reviewOnly = false
+    private var history: Journal.Page? = null
+    private var historyLoading = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -265,6 +267,15 @@ class MainActivity : Activity() {
             else "Recent capture. Export saves the full history, including earlier sessions.")
         panel.action("Export to Downloads") { exportCapture() }
         panel.noteForm()
+        if (name == "Log") {
+            val controls = LinearLayout(this)
+            panel.addView(controls)
+            controls.action("Saved history / older") { loadOlder() }
+            controls.action("Back to live") {
+                history = null
+                updateLog()
+            }
+        }
         if (name == "Incoming") panel.check("Hide routine telemetry") {
             reviewOnly = it
             updateLog()
@@ -282,6 +293,7 @@ class MainActivity : Activity() {
         action("Save note") {
             val value = note.value()
             if (value.isBlank()) return@action toast("Enter an observation first")
+            if (value.length > 1000) return@action toast("Keep observations under 1000 characters")
             journal.note(value, important.isChecked, context)
             note.text.clear()
             toast("Note recorded")
@@ -308,10 +320,33 @@ class MainActivity : Activity() {
 
     private fun updateLog() {
         val view = logViews[activeTab] ?: return
-        val text = journal.tail(activeTab == "Incoming", activeTab == "Incoming" && reviewOnly)
+        val saved = history.takeIf { activeTab == "Log" }
+        val text = if (saved == null) journal.tail(activeTab == "Incoming", activeTab == "Incoming" && reviewOnly)
+        else "Saved capture · bytes ${saved.start}–${saved.end}\n\n${saved.text}"
         if (view.text.toString() == text) return
         view.text = text
-        if (autoFollow[activeTab]?.isChecked == true) body.post { if (currentFocus !is EditText) body.scrollTo(0, view.bottom) }
+        if (saved == null && autoFollow[activeTab]?.isChecked == true) {
+            body.post { if (currentFocus !is EditText) body.scrollTo(0, view.bottom) }
+        }
+    }
+
+    private fun loadOlder() {
+        if (historyLoading) return
+        val before = history?.start
+        if (before == 0L) return toast("Beginning of saved capture")
+        historyLoading = true
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { runCatching { journal.history(before) } }
+                result.onSuccess {
+                    history = it
+                    updateLog()
+                    if (activeTab == "Log") body.scrollTo(0, 0)
+                }.onFailure { toast("Could not read saved capture: ${it.message}") }
+            } finally {
+                historyLoading = false
+            }
+        }
     }
 
     private fun exportCapture() {

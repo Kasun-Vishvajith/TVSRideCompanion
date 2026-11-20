@@ -26,7 +26,8 @@ permissions and works offline. It uses neither phone notifications nor real call
 6. In **Log** or **Incoming**, tap **Export to Downloads**. Android 10+ writes
    directly to Downloads. On Android 8/9 choose Downloads in the document picker.
 
-The on-screen views show a recent tail. Export includes the full local history,
+The live views show a recent tail. **Saved history / older** pages through the
+complete capture. Export includes the full local history,
 including previous sessions, with timestamps, operation status and full raw
 characteristic RX/TX bytes. Transport success reports a BLE write result.
 The physical cluster display and LEDs must be confirmed by the rider. The APK

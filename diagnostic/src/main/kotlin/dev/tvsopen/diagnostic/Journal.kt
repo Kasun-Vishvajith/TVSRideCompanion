@@ -82,6 +82,25 @@ internal class Journal(private val file: File) : Closeable {
             .onFailure { error = "Capture flush failed: ${it.message}" }
     }
 
+    data class Page(val text: String, val start: Long, val end: Long)
+
+    fun history(before: Long?): Page = RandomAccessFile(file, "r").use { input ->
+        val end = before ?: synchronized(this) { flush(); file.length() }
+        val offset = (end - 32768).coerceAtLeast(0L)
+        input.seek(offset)
+        // Seek to a complete UTF-8 record, checking the previous byte in case
+        // the window starts exactly at the beginning of a line.
+        if (offset > 0) {
+            input.seek(offset - 1)
+            if (input.read() != '\n'.code) input.readLine()
+        }
+        val start = input.filePointer
+        check(start < end || end == 0L) { "Capture record is too long to display" }
+        val bytes = ByteArray((end - start).toInt())
+        input.readFully(bytes)
+        Page(bytes.toString(Charsets.UTF_8), start, end)
+    }
+
     fun export(output: OutputStream) {
         val size = synchronized(this) { flush(); file.length() }
         file.inputStream().buffered().use { input ->
