@@ -16,7 +16,7 @@ val sharedBackend by tasks.registering(Sync::class) {
             "dev/tvsopen/nav/RowChars.kt",
             "dev/tvsopen/nav/NavShortCodes.kt",
             "dev/tvsopen/nav/ManeuverReading.kt",
-            "dev/tvsopen/session/Session.kt",
+            "dev/tvsopen/session/**",
             "dev/tvsopen/prefs/RidePrefs.kt",
         )
     }

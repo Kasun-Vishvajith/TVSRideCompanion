@@ -56,7 +56,7 @@ class MainActivity : Activity() {
     private var activeTab = "Connection"
     private val logViews = mutableMapOf<String, TextView>()
     private val autoFollow = mutableMapOf<String, CheckBox>()
-    private var context = "No test selected"
+    private var testContext = "No test selected"
     private var exportRunning = false
     private var reviewOnly = false
     private var history: Journal.Page? = null
@@ -166,8 +166,8 @@ class MainActivity : Activity() {
             val remaining = total.number(16777215) ?: return false
             val minutes = eta.number(65535) ?: return false
             val tripMinutes = duration.number(Int.MAX_VALUE) ?: return false
-            context = "NAV symbol=$symbol next=${metres}m total=${remaining}m ETA=${minutes}min"
-            journal.add("ACTION", "$context duration=${tripMinutes}min arrival=${arrival.value()} road=${road.value()}")
+            testContext = "NAV symbol=$symbol next=${metres}m total=${remaining}m ETA=${minutes}min"
+            journal.add("ACTION", "$testContext duration=${tripMinutes}min arrival=${arrival.value()} road=${road.value()}")
             link.navigation(NavInstruction("", road.value(), metres, minutes, symbol, "manual", remaining))
             return true
         }
@@ -183,8 +183,8 @@ class MainActivity : Activity() {
         panel.action("Navigation on / apply values") { running = apply() }
         panel.action("Navigation off") {
             running = false
-            context = "Navigation off"
-            journal.add("ACTION", context)
+            testContext = "Navigation off"
+            journal.add("ACTION", testContext)
             link.stopNavigation()
         }
         panel.noteForm()
@@ -294,7 +294,7 @@ class MainActivity : Activity() {
             val value = note.value()
             if (value.isBlank()) return@action toast("Enter an observation first")
             if (value.length > 1000) return@action toast("Keep observations under 1000 characters")
-            journal.note(value, important.isChecked, context)
+            journal.note(value, important.isChecked, testContext)
             note.text.clear()
             toast("Note recorded")
             updateLog()
@@ -303,7 +303,7 @@ class MainActivity : Activity() {
 
     private fun transmit(label: String, packets: List<ByteArray>) {
         if (!link.ready) return toast("Wait for Ready to write")
-        context = label
+        testContext = label
         scope.launch {
             commands.withLock { link.send(label, packets) }
         }
