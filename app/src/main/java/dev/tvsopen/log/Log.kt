@@ -334,6 +334,9 @@ object Log {
     fun w(tag: String, msg: String, t: Throwable? = null) = log(Level.WARN, tag, msg, t)
     fun e(tag: String, msg: String, t: Throwable? = null) = log(Level.ERROR, tag, msg, t)
 
+    /** Optional sink for a diagnostic process that archives connection events. */
+    @Volatile var recordObserver: ((LogRecord) -> Unit)? = null
+
     fun log(level: Level, tag: String, message: String, t: Throwable? = null) {
         if (level < minLevel) return
         val sw = t?.let { StringWriter().also { w -> it.printStackTrace(PrintWriter(w)) }.toString() }
@@ -341,6 +344,7 @@ object Log {
         val record = LogRecord(System.currentTimeMillis(), level, tag, safeMessage,
             sw?.let { DiagnosticRedaction.redact(it) })
 
+        recordObserver?.invoke(record)
         AndroidLog.println(level.androidPriority, "$TAG/$tag", safeMessage)
 
         synchronized(lock) {

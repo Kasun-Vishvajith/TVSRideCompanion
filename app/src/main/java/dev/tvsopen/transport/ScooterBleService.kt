@@ -67,7 +67,10 @@ data class BleFrame(val direction: Direction, val bytes: ByteArray, val atMillis
  * capture reports 0x08 (WRITE), which does not advertise WRITE_NO_RESPONSE.
  * GATT completion is transport evidence, never a physical-display ACK.
  */
-class ScooterBleService(private val context: Context) {
+class ScooterBleService(
+    private val context: Context,
+    private val frameObserver: ((BleFrame) -> Unit)? = null,
+) {
 
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
@@ -220,7 +223,7 @@ class ScooterBleService(private val context: Context) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
         val id = bytes.getOrNull(1)?.toInt()?.and(0xFF)
         fun trace(message: String) {
-            if (dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
+            if (frameObserver != null || dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
                 "tx t=${android.os.SystemClock.elapsedRealtime()} connection=$connectionGeneration seq=$seq id=$id $message")
         }
         trace("enqueued")
@@ -296,6 +299,7 @@ class ScooterBleService(private val context: Context) {
 
     private fun emit(frame: BleFrame) {
         _lastFrameAt.value = frame.atMillis
+        frameObserver?.invoke(frame)
         _frames.tryEmit(frame)
         // Bytes go in, hex comes out inside Log.frame, which also skips the
         // formatting cost entirely when capture is disabled.
@@ -400,7 +404,7 @@ class ScooterBleService(private val context: Context) {
         override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (g !== gatt) return
             val pending = pendingWrite?.takeIf { it.client === g && it.characteristic == characteristic.uuid }
-            if (dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
+            if (frameObserver != null || dev.tvsopen.log.RaiderDiagnostics.enabled) Log.i(TAG,
                 "tx callback t=${android.os.SystemClock.elapsedRealtime()} connection=$connectionGeneration seq=${pending?.sequence} " +
                     "status=$status (transport completion, not render ACK)")
             pending?.result?.complete(status)

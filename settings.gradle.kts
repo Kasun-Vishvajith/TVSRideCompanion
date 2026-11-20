@@ -33,3 +33,4 @@ plugins {
 
 rootProject.name = "TVSRideCompanion"
 include(":app")
+include(":diagnostic")
